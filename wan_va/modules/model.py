@@ -28,7 +28,7 @@ from functools import partial
 
 try:
     from flash_attn_interface import flash_attn_func
-except:
+except Exception:
     from flash_attn import flash_attn_func
 
 __all__ = ['WanTransformer3DModel']

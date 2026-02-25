@@ -49,7 +49,7 @@ class Sapien_TEST(gym.Env):
         try:
             self.setup_scene()
             print("\033[32m" + "Render Well" + "\033[0m")
-        except:
+        except Exception:
             print("\033[31m" + "Render Error" + "\033[0m")
             exit()
 
