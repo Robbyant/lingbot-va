@@ -26,10 +26,16 @@ from torch.nn.attention.flex_attention import (
 )
 from functools import partial
 
+flash_attn_func = None
 try:
-    from flash_attn_interface import flash_attn_func
-except:
-    from flash_attn import flash_attn_func
+    from flash_attn_interface import flash_attn_func as _flash_attn_func
+    flash_attn_func = _flash_attn_func
+except Exception:
+    try:
+        from flash_attn import flash_attn_func as _flash_attn_func
+        flash_attn_func = _flash_attn_func
+    except Exception:
+        flash_attn_func = None
 
 __all__ = ['WanTransformer3DModel']
 
@@ -302,12 +308,18 @@ class WanAttention(torch.nn.Module):
         if attn_mode == 'torch':
             self.attn_op = custom_sdpa
         elif attn_mode == 'flashattn':
+            if flash_attn_func is None:
+                raise ImportError(
+                    "attn_mode='flashattn' requires flash-attn, but it is not available "
+                    "or failed to import. Please install a torch-compatible flash-attn "
+                    "or switch attn_mode to 'torch'."
+                )
             self.attn_op = flash_attn_func
         elif attn_mode == 'flex':
             self.attn_op = FlexAttnFunc(cross_attention_dim_head is not None)
         else:
             raise ValueError(
-                f"Unsupported attention mode: {attn_mode}, only support torch and flashattn"
+                f"Unsupported attention mode: {attn_mode}, only support torch, flashattn, and flex"
             )
 
         self.inner_dim = dim_head * heads

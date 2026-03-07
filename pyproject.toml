@@ -12,16 +12,15 @@ authors = [
 license = { file = "LICENSE.txt" }
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
+# 不在此声明 torch/torchvision/flash_attn，避免 pip install -e . 从 PyPI 拉取覆盖已安装的 cu124 版本
+# 请先按 README 或 script/setup_cu124_mirror.md 单独安装 PyTorch (cu124)，再 pip install -e . --no-deps 或直接运行
 dependencies = [
-    "torch>=2.9.0",
-    "torchvision>=0.24.0",
     "diffusers>=0.36.0",
     "transformers>=4.55.4",
     "tokenizers>=0.21.4",
     "tqdm",
     "imageio",
     "easydict",
-    "flash_attn",
     "numpy>=1.26.4,<2"
 ]
 
@@ -44,10 +43,10 @@ modelscope = "https://github.com/Robbyant"
 discord = "https://github.com/Robbyant"
 
 [tool.setuptools]
-packages = ["lingbot_va"]
+packages = ["wan_va"]
 
 [tool.setuptools.package-data]
-"lingbot_va" = ["**/*.py"]
+"wan_va" = ["**/*.py"]
 
 [tool.black]
 line-length = 88

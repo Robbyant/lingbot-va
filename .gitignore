@@ -1,0 +1,37 @@
+# 不纳入版本控制：模型与测评结果（仅保留核心代码）
+models/
+results/
+
+# 日志与临时
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+
+# 虚拟环境 / conda
+.venv/
+venv/
+env/
+
+# IDE / 编辑
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 系统
+.DS_Store
+Thumbs.db

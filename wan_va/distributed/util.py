@@ -12,10 +12,13 @@ def _configure_model(model, shard_fn, param_dtype, device, eval_mode=True):
     if dist.is_initialized():
         dist.barrier()
 
+    # Unify parameter dtypes before FSDP wrap (FSDP requires uniform dtype).
+    # Some modules may be kept in fp32 by the model (e.g. _keep_in_fp32_modules).
+    model.to(param_dtype)
+
     if dist.is_initialized():
         model = shard_fn(model)
     else:
-        model.to(param_dtype)
         model.to(device)
 
     return model
