@@ -1,4 +1,5 @@
 # Copyright 2024-2025 The Robbyant Team Authors. All rights reserved.
+import os
 from easydict import EasyDict
 
 from .shared_config import va_shared_cfg
@@ -6,10 +7,13 @@ from .shared_config import va_shared_cfg
 va_robotwin_cfg = EasyDict(__name__='Config: VA robotwin')
 va_robotwin_cfg.update(va_shared_cfg)
 
-va_robotwin_cfg.wan22_pretrained_model_name_or_path = "/path/to/pretrained/model"
+va_robotwin_cfg.wan22_pretrained_model_name_or_path = os.environ.get(
+    "LINGBOT_VA_MODEL_PATH", "/path/to/pretrained/model"
+)
 
 va_robotwin_cfg.attn_window = 72
-va_robotwin_cfg.frame_chunk_size = 2
+# 与论文一致: K=4 for deployment; 推理 3 steps video (to s=0.6), 10 steps action (to s=1.0)
+va_robotwin_cfg.frame_chunk_size = 4
 va_robotwin_cfg.env_type = 'robotwin_tshape'
 
 va_robotwin_cfg.height = 256
@@ -23,9 +27,10 @@ va_robotwin_cfg.obs_cam_keys = [
 va_robotwin_cfg.guidance_scale = 5
 va_robotwin_cfg.action_guidance_scale = 1
 
-va_robotwin_cfg.num_inference_steps = 25
+# 论文: Euler 3 steps video (to s=0.6), 10 steps action (to s=1.0); Video CFG 5.0, Action CFG 1.0
+va_robotwin_cfg.num_inference_steps = 3
 va_robotwin_cfg.video_exec_step = -1
-va_robotwin_cfg.action_num_inference_steps = 50
+va_robotwin_cfg.action_num_inference_steps = 10
 
 va_robotwin_cfg.snr_shift = 5.0
 va_robotwin_cfg.action_snr_shift = 1.0

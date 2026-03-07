@@ -1,12 +1,13 @@
 import sys
 import os
 import subprocess
+import time
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import cv2
 from pathlib import Path
 
-robowin_root = Path("/path/to/your/robowin")
+robowin_root = Path(os.environ.get("ROBOTWIN_ROOT", "/path/to/your/robowin"))
 if str(robowin_root) not in sys.path:
     sys.path.insert(0, str(robowin_root))
 
@@ -205,36 +206,42 @@ def save_comparison_video(real_obs_list, imagined_video, action_history, save_pa
     
     print(f"Saving video: Real {n_real} frames, Imagined {n_imagined} frames...")
 
-    final_frames = []
+    # 首帧确定统一尺寸，保证整段视频每帧一致，避免 imageio "All images should have same size"
+    obs0 = real_obs_list[0]
+    base_h = obs0["observation.images.cam_high"].shape[0]
 
+    def resize_h(img, h):
+        if img.shape[0] != h:
+            w = int(img.shape[1] * h / img.shape[0])
+            img = cv2.resize(img, (w, h))
+        img = np.ascontiguousarray(img)
+        if img.dtype != np.uint8:
+            img = (img * 255).astype(np.uint8)
+        return img
+
+    # Real 行为左-中-右：High | Left wrist | Right wrist，与 obs_cam_keys 顺序一致
+    part_high_0 = resize_h(obs0["observation.images.cam_high"], base_h)
+    part_left_0 = resize_h(obs0["observation.images.cam_left_wrist"], base_h)
+    part_right_0 = resize_h(obs0["observation.images.cam_right_wrist"], base_h)
+    w_high, w_left, w_right = part_high_0.shape[1], part_left_0.shape[1], part_right_0.shape[1]
+    row_real0 = np.hstack([part_high_0, part_left_0, part_right_0])
+    row_real0 = add_title_bar(row_real0, "Real Observation (High / Left / Right)")
+    target_width = row_real0.shape[1]
+    real_row_h = row_real0.shape[0]
+    imagined_row_h = 256
+
+    final_frames = []
     for i in range(n_frames):
         obs = real_obs_list[i]
-        cam_high = obs["observation.images.cam_high"]
-        cam_left = obs["observation.images.cam_left_wrist"]
-        cam_right = obs["observation.images.cam_right_wrist"]
-
-        base_h = cam_high.shape[0]
-        
-        def resize_h(img, h):
-            if img.shape[0] != h:
-                w = int(img.shape[1] * h / img.shape[0])
-                img = cv2.resize(img, (w, h))
-            img = np.ascontiguousarray(img)
-            if img.dtype != np.uint8:
-                img = (img * 255).astype(np.uint8)
-            return img
-
         row_real = np.hstack([
-            resize_h(cam_high, base_h), 
-            resize_h(cam_left, base_h), 
-            resize_h(cam_right, base_h)
+            resize_h(obs["observation.images.cam_high"], base_h),
+            resize_h(obs["observation.images.cam_left_wrist"], base_h),
+            resize_h(obs["observation.images.cam_right_wrist"], base_h),
         ])
-        
         row_real = np.ascontiguousarray(row_real)
-
         row_real = add_title_bar(row_real, "Real Observation (High / Left / Right)")
-
-        target_width = row_real.shape[1]
+        if row_real.shape[1] != target_width or row_real.shape[0] != real_row_h:
+            row_real = cv2.resize(row_real, (target_width, real_row_h))
 
         if imagined_video is not None and i < n_imagined:
             img_frame = imagined_video[i]
@@ -242,19 +249,32 @@ def save_comparison_video(real_obs_list, imagined_video, action_history, save_pa
                 img_frame = (img_frame * 255).astype(np.uint8)
             elif img_frame.dtype != np.uint8:
                 img_frame = img_frame.astype(np.uint8)
-
-            h = int(img_frame.shape[0] * target_width / img_frame.shape[1])
-            row_imagined = cv2.resize(img_frame, (target_width, h))
+            # 与 real 一致：左-中-右 = High | Left wrist | Right wrist（模型输出顺序与 obs_cam_keys 一致）
+            H_im, W_im = img_frame.shape[0], img_frame.shape[1]
+            if W_im >= 3:
+                third = W_im // 3
+                im_high = cv2.resize(img_frame[:, 0:third], (w_high, imagined_row_h))
+                im_left = cv2.resize(img_frame[:, third : 2 * third], (w_left, imagined_row_h))
+                im_right = cv2.resize(img_frame[:, 2 * third :], (w_right, imagined_row_h))
+                row_imagined = np.hstack([im_high, im_left, im_right])
+            else:
+                row_imagined = cv2.resize(img_frame, (target_width, imagined_row_h))
         else:
-            row_imagined = np.zeros((300, target_width, 3), dtype=np.uint8)
-            cv2.putText(row_imagined, "Coming soon", (target_width//2 - 100, 150), 
+            row_imagined = np.zeros((imagined_row_h, target_width, 3), dtype=np.uint8)
+            cv2.putText(row_imagined, "Coming soon", (target_width//2 - 100, imagined_row_h//2 - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
 
         row_imagined = np.ascontiguousarray(row_imagined)
-        row_imagined = add_title_bar(row_imagined, "Imagined Video Stream")
+        row_imagined = add_title_bar(row_imagined, "Imagined Video (High / Left / Right)")
         full_frame = np.vstack([row_real, row_imagined])
         full_frame = np.ascontiguousarray(full_frame)
         final_frames.append(full_frame)
+
+    # 统一为第一帧尺寸，防止 add_title_bar 等导致细微差异
+    ref_h, ref_w = final_frames[0].shape[0], final_frames[0].shape[1]
+    for idx in range(len(final_frames)):
+        if final_frames[idx].shape[0] != ref_h or final_frames[idx].shape[1] != ref_w:
+            final_frames[idx] = cv2.resize(final_frames[idx], (ref_w, ref_h))
 
     imageio.mimsave(save_path, final_frames, fps=fps)
     print(f"Combined video saved to: {save_path}")
@@ -305,6 +325,7 @@ def main(usr_args):
     policy_name = usr_args["policy_name"]
     video_guidance_scale = usr_args["video_guidance_scale"]
     action_guidance_scale = usr_args["action_guidance_scale"]
+    save_visualization = bool(usr_args.get("save_visualization", True))
     instruction_type = 'seen'
     save_dir = None
     video_save_dir = None
@@ -397,7 +418,7 @@ def main(usr_args):
     test_num = usr_args["test_num"]
 
     
-    model = WebsocketClientPolicy(port=usr_args['port'])
+    model = WebsocketClientPolicy(host="127.0.0.1", port=usr_args['port'])
 
     st_seed, suc_num = eval_policy(task_name,
                                    TASK_ENV,
@@ -407,7 +428,7 @@ def main(usr_args):
                                    test_num=test_num,
                                    video_size=video_size,
                                    instruction_type=instruction_type,
-                                   save_visualization=True,
+                                   save_visualization=save_visualization,
                                    video_guidance_scale=video_guidance_scale,
                                    action_guidance_scale=action_guidance_scale)
     suc_nums.append(suc_num)
@@ -462,7 +483,7 @@ def eval_policy(task_name,
     now_id = 0
     succ_seed = 0
     suc_test_seed_list = []
-
+    all_trajectory_timings = []  # 每条 trajectory 的耗时汇总，用于最后样本级统计
 
     now_seed = st_seed
     clear_cache_freq = args["clear_cache_freq"]
@@ -545,6 +566,7 @@ def eval_policy(task_name,
         full_obs_list = []
         gen_video_list = []
         full_action_history = []
+        trajectory_timings = []  # 当前 trajectory 每次 infer 的 timing
 
         initial_obs = TASK_ENV.get_obs() 
         inint_eef_pose = initial_obs['endpose']['left_endpose'] + \
@@ -561,16 +583,21 @@ def eval_policy(task_name,
                 first_obs = format_obs(observation, prompt)
 
             ret = model.infer(dict(obs=first_obs, prompt=prompt, save_visualization=save_visualization, video_guidance_scale=video_guidance_scale, action_guidance_scale=action_guidance_scale)) #(TASK_ENV, model, observation)
+            if 'timing' in ret:
+                trajectory_timings.append(ret['timing'])
             action = ret['action']
             if 'video' in ret:
                 imagined_video = ret['video']
                 gen_video_list.append(imagined_video)
+                print(f"  [eval] received predicted video chunk, shape {getattr(imagined_video, 'shape', '?')}")
             key_frame_list = []
 
             assert action.shape[2] % 4 == 0
             action_per_frame = action.shape[2] // 4
 
             start_idx = 1 if first else 0
+            t0_env_step = time.perf_counter()
+            env_step_count = 0
             for i in range(start_idx, action.shape[1]):
                 for j in range(action.shape[2]):
                     raw_action_step = action[:, i, j].flatten() 
@@ -597,20 +624,58 @@ def eval_policy(task_name,
                     else:
                         raise NotImplementedError
                     TASK_ENV.take_action(ee_action, action_type='ee')
+                    env_step_count += 1
                    
                     if (j+1) % action_per_frame == 0:
                         obs = format_obs(TASK_ENV.get_obs(), prompt)
                         full_obs_list.append(obs)
                         key_frame_list.append(obs)
+            trajectory_timings.append(
+                dict(env_step_update=(time.perf_counter() - t0_env_step), env_step_count=env_step_count)
+            )
                     
             first = False
 
-            model.infer(dict(obs = key_frame_list, compute_kv_cache=True, imagine=False, save_visualization=save_visualization, state=action))
-  
+            ret_kv = model.infer(dict(obs = key_frame_list, compute_kv_cache=True, imagine=False, save_visualization=save_visualization, state=action))
+            if 'timing' in ret_kv:
+                trajectory_timings.append(ret_kv['timing'])
+
             if TASK_ENV.eval_success:
                 succ = True
                 break
-      
+
+        # 当前 trajectory 耗时汇总与占比（以 trajectory 为单位输出）
+        if trajectory_timings:
+            keys = ['encode_obs', 'video_denoise', 'action_denoise', 'kv_cache', 'env_step_update', 'other']
+            summed = {k: sum(t.get(k, 0.0) for t in trajectory_timings) for k in keys}
+            total = sum(summed.values()) or 1e-9
+            pct = {k: 100.0 * summed[k] / total for k in keys}
+            total_env_steps = int(sum(t.get('env_step_count', 0) for t in trajectory_timings))
+            avg_env_step = summed['env_step_update'] / max(total_env_steps, 1)
+            print(f"\033[90m[Trajectory {TASK_ENV.test_num + 1}] 耗时(秒): encode_obs={summed['encode_obs']:.2f}, video_denoise={summed['video_denoise']:.2f}, action_denoise={summed['action_denoise']:.2f}, kv_cache={summed['kv_cache']:.2f}, env_step_update={summed['env_step_update']:.2f}, other={summed['other']:.2f} | 占比(%): encode_obs={pct['encode_obs']:.1f}%, video_denoise={pct['video_denoise']:.1f}%, action_denoise={pct['action_denoise']:.1f}%, kv_cache={pct['kv_cache']:.1f}%, env_step_update={pct['env_step_update']:.1f}%, other={pct['other']:.1f}% | env_step均值={avg_env_step*1000:.1f}ms ({total_env_steps} steps)\033[0m")
+            detail_keys = [
+                'encode_obs_cpu_preprocess',
+                'encode_obs_to_vae_device',
+                'encode_obs_vae_encode',
+                'encode_obs_latent_postprocess',
+            ]
+            detail_summed = {k: sum(t.get(k, 0.0) for t in trajectory_timings) for k in detail_keys}
+            encode_total = summed['encode_obs'] or 1e-9
+            detail_pct = {k: 100.0 * detail_summed[k] / encode_total for k in detail_keys}
+            print(
+                "\033[90m"
+                f"  └─ encode_obs细分(秒): cpu_preprocess={detail_summed['encode_obs_cpu_preprocess']:.2f}, "
+                f"to_vae_device={detail_summed['encode_obs_to_vae_device']:.2f}, "
+                f"vae_encode={detail_summed['encode_obs_vae_encode']:.2f}, "
+                f"latent_postprocess={detail_summed['encode_obs_latent_postprocess']:.2f} "
+                f"| 占encode_obs(%): cpu_preprocess={detail_pct['encode_obs_cpu_preprocess']:.1f}%, "
+                f"to_vae_device={detail_pct['encode_obs_to_vae_device']:.1f}%, "
+                f"vae_encode={detail_pct['encode_obs_vae_encode']:.1f}%, "
+                f"latent_postprocess={detail_pct['encode_obs_latent_postprocess']:.1f}%"
+                "\033[0m"
+            )
+            summed['env_step_count'] = total_env_steps
+            all_trajectory_timings.append(summed)
 
         vis_dir = Path(args['save_root']) / f'stseed-{st_seed}' / 'visualization' / task_name
         vis_dir.mkdir(parents=True, exist_ok=True)
@@ -618,7 +683,7 @@ def eval_policy(task_name,
         out_img_file = vis_dir / video_name
         save_comparison_video(
             real_obs_list=full_obs_list,
-            imagined_video=None, #gen_video_list,
+            imagined_video=gen_video_list if gen_video_list else None,
             action_history=full_action_history,
             save_path=str(out_img_file),
             fps=15 # Suggest adjusting fps based on simulation step
@@ -655,6 +720,25 @@ def eval_policy(task_name,
         )
         now_seed += 1
 
+    # 以样本为单位输出时间占比统计
+    if all_trajectory_timings:
+        keys = ['encode_obs', 'video_denoise', 'action_denoise', 'kv_cache', 'env_step_update', 'other']
+        total_summed = {k: sum(t.get(k, 0.0) for t in all_trajectory_timings) for k in keys}
+        total_sec = sum(total_summed.values()) or 1e-9
+        total_pct = {k: 100.0 * total_summed[k] / total_sec for k in keys}
+        n_samples = len(all_trajectory_timings)
+        total_env_steps = int(sum(t.get('env_step_count', 0) for t in all_trajectory_timings))
+        avg_env_step = total_summed['env_step_update'] / max(total_env_steps, 1)
+        print("\n\033[97m======== 样本级时间占比统计 ({} 条 trajectory) ========\033[0m".format(n_samples))
+        print("\033[97m总耗时(秒): encode_obs={:.2f}, video_denoise={:.2f}, action_denoise={:.2f}, kv_cache={:.2f}, env_step_update={:.2f}, other={:.2f}\033[0m".format(
+            total_summed['encode_obs'], total_summed['video_denoise'], total_summed['action_denoise'],
+            total_summed['kv_cache'], total_summed['env_step_update'], total_summed['other']))
+        print("\033[97m占比(%): encode_obs={:.1f}%, video_denoise={:.1f}%, action_denoise={:.1f}%, kv_cache={:.1f}%, env_step_update={:.1f}%, other={:.1f}%\033[0m".format(
+            total_pct['encode_obs'], total_pct['video_denoise'], total_pct['action_denoise'],
+            total_pct['kv_cache'], total_pct['env_step_update'], total_pct['other']))
+        print("\033[97menv_step 平均耗时: {:.1f} ms/step ({} steps)\033[0m".format(avg_env_step * 1000.0, total_env_steps))
+        print("\033[97m========================================================\033[0m\n")
+
     return now_seed, TASK_ENV.suc
 
 
@@ -667,6 +751,8 @@ def parse_args_and_config():
     parser.add_argument("--video_guidance_scale", type=float, default=5.0)
     parser.add_argument("--action_guidance_scale", type=float, default=5.0)
     parser.add_argument("--test_num", type=int, default=100)
+    parser.add_argument("--save_visualization", type=lambda x: str(x).lower() not in ('0', 'false', 'no', 'off'), default=True,
+                        help='是否渲染并保存预测视频（VAE 解码+对比视频），关闭可显著加速。传 0 或 false 关闭。')
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:

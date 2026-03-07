@@ -321,13 +321,20 @@ class VA_Server:
                                                           action_mask] *= 0
         return input_dict
 
-    def _encode_obs(self, obs):
+    def _encode_obs(self, obs, profile=False):
+        detail = {
+            'cpu_preprocess': 0.0,
+            'to_vae_device': 0.0,
+            'vae_encode': 0.0,
+            'latent_postprocess': 0.0,
+        }
         images = obs['obs']
         if not isinstance(images, list):
             images = [images]
         if len(images) < 1:
-            return None
+            return (None, detail) if profile else None
         videos = []
+        t0_cpu = time.perf_counter()
         for k_i, k in enumerate(self.job_config.obs_cam_keys):
             if self.env_type == 'robotwin_tshape':
                 if k_i == 0:  # camera high
@@ -345,16 +352,27 @@ class VA_Server:
                                             mode='bilinear',
                                             align_corners=False).unsqueeze(0)
             videos.append(history_video_k)
+        detail['cpu_preprocess'] = time.perf_counter() - t0_cpu
 
         if self.env_type == 'robotwin_tshape':
             videos_high = videos[0] / 255.0 * 2.0 - 1.0
             videos_left_and_right = torch.cat(videos[1:],
                                               dim=0) / 255.0 * 2.0 - 1.0
             vae_device = next(self.streaming_vae.vae.parameters()).device
+            t0_to = time.perf_counter()
+            videos_high = videos_high.to(vae_device).to(self.dtype)
+            videos_left_and_right = videos_left_and_right.to(vae_device).to(self.dtype)
+            if profile and vae_device.type == 'cuda':
+                torch.cuda.synchronize(vae_device)
+            detail['to_vae_device'] = time.perf_counter() - t0_to
+            t0_vae = time.perf_counter()
             enc_out_high = self.streaming_vae.encode_chunk(
-                videos_high.to(vae_device).to(self.dtype))
+                videos_high)
             enc_out_left_and_right = self.streaming_vae_half.encode_chunk(
-                videos_left_and_right.to(vae_device).to(self.dtype))
+                videos_left_and_right)
+            if profile and vae_device.type == 'cuda':
+                torch.cuda.synchronize(vae_device)
+            detail['vae_encode'] = time.perf_counter() - t0_vae
             enc_out = torch.cat([
                 torch.cat(enc_out_left_and_right.split(1, dim=0), dim=-1),
                 enc_out_high
@@ -363,15 +381,28 @@ class VA_Server:
         else:
             videos = torch.cat(videos, dim=0) / 255.0 * 2.0 - 1.0
             vae_device = next(self.streaming_vae.vae.parameters()).device
+            t0_to = time.perf_counter()
             videos_chunk = videos.to(vae_device).to(self.dtype)
+            if profile and vae_device.type == 'cuda':
+                torch.cuda.synchronize(vae_device)
+            detail['to_vae_device'] = time.perf_counter() - t0_to
+            t0_vae = time.perf_counter()
             enc_out = self.streaming_vae.encode_chunk(videos_chunk)
+            if profile and vae_device.type == 'cuda':
+                torch.cuda.synchronize(vae_device)
+            detail['vae_encode'] = time.perf_counter() - t0_vae
 
+        t0_post = time.perf_counter()
         mu, logvar = torch.chunk(enc_out, 2, dim=1)
         latents_mean = torch.tensor(self.vae.config.latents_mean).to(mu.device)
         latents_std = torch.tensor(self.vae.config.latents_std).to(mu.device)
         mu_norm = self.normalize_latents(mu, latents_mean, 1.0 / latents_std)
         video_latent = torch.cat(mu_norm.split(1, dim=0), dim=-1)
-        return video_latent.to(self.device)
+        video_latent = video_latent.to(self.device)
+        if profile and self.device.type == 'cuda':
+            torch.cuda.synchronize(self.device)
+        detail['latent_postprocess'] = time.perf_counter() - t0_post
+        return (video_latent, detail) if profile else video_latent
 
     def _reset(self, prompt=None):
         logger.info('Reset.')
@@ -379,6 +410,7 @@ class VA_Server:
         #### Reset all parameters
         self.frame_st_id = 0
         self.init_latent = None
+        self.last_latents = None  # 用于 skip video 时复用上一轮的 video latent（可视化等）
         #### clean vae and transformer cache
         self.transformer.clear_cache(self.cache_name)
         self.streaming_vae.clear_cache()
@@ -440,18 +472,41 @@ class VA_Server:
         torch.cuda.empty_cache()
 
     def _infer(self, obs, frame_st_id=0):
+        timing = dict(encode_obs=0.0, video_denoise=0.0, action_denoise=0.0, kv_cache=0.0, other=0.0)
         frame_chunk_size = self.job_config.frame_chunk_size
-        if frame_st_id == 0:
-            init_latent = self._encode_obs(obs)
-            self.init_latent = init_latent
+        # 当前回合是否跳过 video 预测，仅跑 action（复用上一轮的 KV cache / last_latents）
+        # 仅当 frame_st_id != 0 且显式传入 world_steps_override=0 时生效；首帧必须跑 video 以构建 cache
+        world_steps_override = obs.get('world_steps_override', None)
+        skip_video = (
+            frame_st_id != 0
+            and world_steps_override is not None
+            and world_steps_override == 0
+            and self.last_latents is not None
+        )
+        if skip_video:
+            logger.info(f"[Skip Video] frame_st_id={frame_st_id}, 本回合仅跑 action，复用上轮 KV cache")
 
-        latents = torch.randn(1,
-                              48,
-                              frame_chunk_size,
-                              self.latent_height,
-                              self.latent_width,
-                              device=self.device,
-                              dtype=self.dtype)
+        if frame_st_id == 0:
+            init_latent, encode_detail = self._encode_obs(obs, profile=True)
+            timing['encode_obs'] = sum(encode_detail.values())
+            timing['encode_obs_cpu_preprocess'] = encode_detail['cpu_preprocess']
+            timing['encode_obs_to_vae_device'] = encode_detail['to_vae_device']
+            timing['encode_obs_vae_encode'] = encode_detail['vae_encode']
+            timing['encode_obs_latent_postprocess'] = encode_detail['latent_postprocess']
+            self.init_latent = init_latent
+        else:
+            init_latent = self.init_latent
+
+        if skip_video:
+            latents = self.last_latents  # 复用上一轮 video 结果，仅用于返回/可视化
+        else:
+            latents = torch.randn(1,
+                                  48,
+                                  frame_chunk_size,
+                                  self.latent_height,
+                                  self.latent_width,
+                                  device=self.device,
+                                  dtype=self.dtype)
         actions = torch.randn(1,
                               self.job_config.action_dim,
                               frame_chunk_size,
@@ -484,42 +539,47 @@ class VA_Server:
         with (
                 torch.no_grad(),
         ):
-            # 1. Video Generation Loop
-            for i, t in enumerate(tqdm(timesteps)):
-                last_step = i == len(timesteps) - 1
-                latent_cond = init_latent[:, :, 0:1].to(
-                    self.dtype) if frame_st_id == 0 else None
-                input_dict = self._prepare_latent_input(
-                    latents,
-                    None,
-                    t,
-                    t,
-                    latent_cond,
-                    None,
-                    frame_st_id=frame_st_id)
+            # 1. Video Generation Loop（skip_video 时跳过，直接用上一轮 cache，只跑 action）
+            t0_video = time.perf_counter()
+            if not skip_video:
+                for i, t in enumerate(tqdm(timesteps)):
+                    last_step = i == len(timesteps) - 1
+                    latent_cond = init_latent[:, :, 0:1].to(
+                        self.dtype) if frame_st_id == 0 else None
+                    input_dict = self._prepare_latent_input(
+                        latents,
+                        None,
+                        t,
+                        t,
+                        latent_cond,
+                        None,
+                        frame_st_id=frame_st_id)
 
-                video_noise_pred = self.transformer(
-                    self._repeat_input_for_cfg(input_dict['latent_res_lst']),
-                    update_cache=1 if last_step else 0,
-                    cache_name=self.cache_name,
-                    action_mode=False)
+                    video_noise_pred = self.transformer(
+                        self._repeat_input_for_cfg(input_dict['latent_res_lst']),
+                        update_cache=1 if last_step else 0,
+                        cache_name=self.cache_name,
+                        action_mode=False)
 
-                if not last_step or video_step != -1:
-                    video_noise_pred = data_seq_to_patch(
-                        self.job_config.patch_size, video_noise_pred,
-                        frame_chunk_size, self.latent_height,
-                        self.latent_width, batch_size=2 if self.use_cfg else 1)
-                    if self.job_config.guidance_scale > 1:
-                        video_noise_pred = video_noise_pred[1:] + self.job_config.guidance_scale * (video_noise_pred[:1] - video_noise_pred[1:])
-                    else:
-                        video_noise_pred = video_noise_pred[:1]
-                    latents = self.scheduler.step(video_noise_pred,
-                                                  t,
-                                                  latents,
-                                                  return_dict=False)
+                    if not last_step or video_step != -1:
+                        video_noise_pred = data_seq_to_patch(
+                            self.job_config.patch_size, video_noise_pred,
+                            frame_chunk_size, self.latent_height,
+                            self.latent_width, batch_size=2 if self.use_cfg else 1)
+                        if self.job_config.guidance_scale > 1:
+                            video_noise_pred = video_noise_pred[1:] + self.job_config.guidance_scale * (video_noise_pred[:1] - video_noise_pred[1:])
+                        else:
+                            video_noise_pred = video_noise_pred[:1]
+                        latents = self.scheduler.step(video_noise_pred,
+                                                      t,
+                                                      latents,
+                                                      return_dict=False)
 
-                latents[:, :, 0:1] = latent_cond if frame_st_id == 0 else latents[:, :, 0:1]
+                    latents[:, :, 0:1] = latent_cond if frame_st_id == 0 else latents[:, :, 0:1]
+                self.last_latents = latents.detach().clone()
+            timing['video_denoise'] = time.perf_counter() - t0_video
 
+            t0_action = time.perf_counter()
             for i, t in enumerate(tqdm(action_timesteps)):
                 last_step = i == len(action_timesteps) - 1
                 action_cond = torch.zeros(
@@ -558,26 +618,38 @@ class VA_Server:
                                                          return_dict=False)
 
                 actions[:, :, 0:1] = action_cond if frame_st_id == 0 else actions[:, :, 0:1]
+            timing['action_denoise'] = time.perf_counter() - t0_action
 
         actions[:, ~self.action_mask] *= 0
 
+        t0_other = time.perf_counter()
         save_async(latents, os.path.join(self.exp_save_root, f'latents_{frame_st_id}.pt'))
         save_async(actions, os.path.join(self.exp_save_root, f'actions_{frame_st_id}.pt'))
 
         actions = self.postprocess_action(actions)
         torch.cuda.empty_cache()
-        return actions, latents
+        timing['other'] = time.perf_counter() - t0_other
+        return actions, latents, timing
 
     def _compute_kv_cache(self, obs):
+        timing = dict(encode_obs=0.0, video_denoise=0.0, action_denoise=0.0, kv_cache=0.0, other=0.0)
         ### optional async save obs for debug
         self.transformer.clear_pred_cache(self.cache_name)
         save_async(obs['obs'], os.path.join(self.exp_save_root, f'obs_data_{self.frame_st_id}.pt'))
-        latent_model_input = self._encode_obs(obs)
+        logger.info("[KV Cache] 阶段 1/2: 编码观测 (encode_obs, VAE)...")
+        latent_model_input, encode_detail = self._encode_obs(obs, profile=True)
+        timing['encode_obs'] = sum(encode_detail.values())
+        timing['encode_obs_cpu_preprocess'] = encode_detail['cpu_preprocess']
+        timing['encode_obs_to_vae_device'] = encode_detail['to_vae_device']
+        timing['encode_obs_vae_encode'] = encode_detail['vae_encode']
+        timing['encode_obs_latent_postprocess'] = encode_detail['latent_postprocess']
+        logger.info(f"[KV Cache] encode_obs 完成, 耗时 {timing['encode_obs']:.2f}s")
         if self.frame_st_id == 0:
             latent_model_input = torch.cat(
                 [self.init_latent, latent_model_input],
                 dim=2) if latent_model_input is not None else self.init_latent
 
+        t0_prep = time.perf_counter()
         action_model_input = self.preprocess_action(obs['state'])
         action_model_input = action_model_input.to(latent_model_input)
         logger.info(
@@ -586,10 +658,13 @@ class VA_Server:
         input_dict = self._prepare_latent_input(latent_model_input,
                                                 action_model_input,
                                                 frame_st_id=self.frame_st_id)
+        timing['other'] = time.perf_counter() - t0_prep
 
         with (
                 torch.no_grad(),
         ):
+            logger.info("[KV Cache] 阶段 2/2: 更新 KV cache (transformer)...")
+            t0_kv = time.perf_counter()
             self.transformer(self._repeat_input_for_cfg(input_dict['latent_res_lst']),
                              update_cache=2,
                              cache_name=self.cache_name,
@@ -599,8 +674,11 @@ class VA_Server:
                              update_cache=2,
                              cache_name=self.cache_name,
                              action_mode=True)
+            timing['kv_cache'] = time.perf_counter() - t0_kv
+            logger.info(f"[KV Cache] kv_cache 完成, 耗时 {timing['kv_cache']:.2f}s (本请求总耗时 encode_obs+kv_cache 即上述两阶段)")
         torch.cuda.empty_cache()
         self.frame_st_id += latent_model_input.shape[2]
+        return timing
 
     @torch.no_grad()
     def infer(self, obs):
@@ -614,14 +692,31 @@ class VA_Server:
             return dict()
         elif compute_kv_cache:
             logger.info(
-                f"################# Compute KV Cache #################")
-            self._compute_kv_cache(obs)
-            return dict()
+                "################# Compute KV Cache（本请求先做 encode_obs 再做 kv_cache）#################")
+            kv_timing = self._compute_kv_cache(obs)
+            return dict(timing=kv_timing)
         else:
             logger.info(f"################# Infer One Chunk #################")
-            action, _ = self._infer(obs, frame_st_id=self.frame_st_id)
-            return dict(action=action)
-    
+            action, latents, infer_timing = self._infer(obs, frame_st_id=self.frame_st_id)
+            out = dict(action=action, timing=infer_timing)
+            # 可选：返回当前 chunk 解码后的预测视频，供 eval 对比可视化（解码耗时计入 other）
+            save_vis = obs.get('save_visualization', False) or obs.get(b'save_visualization', False)
+            if save_vis and latents is not None:
+                if getattr(self, 'video_processor', None) is None:
+                    self.video_processor = VideoProcessor(vae_scale_factor=1)
+                if self.enable_offload:
+                    self.vae = self.vae.to(self.device)
+                try:
+                    t0_decode = time.perf_counter()
+                    video = self.decode_one_video(latents, 'np')[0]
+                    out['video'] = video.cpu().numpy() if hasattr(video, 'cpu') else np.asarray(video)
+                    infer_timing['other'] = infer_timing.get('other', 0) + (time.perf_counter() - t0_decode)
+                    logger.info(f"Returning predicted video chunk, shape {out['video'].shape}")
+                finally:
+                    if self.enable_offload:
+                        self.vae = self.vae.to('cpu')
+            return out
+
     def decode_one_video(self, latents, output_type):
         latents = latents.to(self.vae.dtype)
         latents_mean = (
@@ -651,7 +746,7 @@ class VA_Server:
         pred_latent_lst = []
         pred_action_lst = []
         for chunk_id in range(self.job_config.num_chunks_to_infer):
-            actions, latents = self._infer(init_obs, frame_st_id=(chunk_id * self.job_config.frame_chunk_size))
+            actions, latents, _ = self._infer(init_obs, frame_st_id=(chunk_id * self.job_config.frame_chunk_size))
             actions = torch.from_numpy(actions)
             pred_latent_lst.append(latents)
             pred_action_lst.append(actions)
@@ -671,11 +766,28 @@ class VA_Server:
             self.vae = self.vae.to(self.device).to(self.dtype)
         
         decoded_video = self.decode_one_video(pred_latent, 'np')[0]
+        # Optional 2x upscale for viewing: model outputs at 256x320 (robotwin), upscale so demo is less pixelated
+        export_scale = getattr(self.job_config, 'export_scale', 2)
+        if export_scale != 1 and export_scale > 1:
+            t, h, w, c = decoded_video.shape
+            vid = torch.from_numpy(decoded_video).float().permute(0, 3, 1, 2)  # (T, C, H, W)
+            vid = F.interpolate(
+                vid,
+                size=(h * export_scale, w * export_scale),
+                mode='bilinear',
+                align_corners=False,
+            )
+            decoded_video = vid.permute(0, 2, 3, 1).numpy().astype(np.uint8)
         export_to_video(decoded_video, os.path.join(self.save_root, "demo.mp4"), fps=10)
 
 def run(args):    
     
     config = VA_CONFIGS[args.config_name]
+    # 通过环境变量强制控制 offload：0/false 表示关闭 offload（VAE 常驻 GPU，通常更快）
+    env_enable_offload = os.environ.get("ENABLE_OFFLOAD")
+    if env_enable_offload is not None:
+        config.enable_offload = str(env_enable_offload).lower() not in ("0", "false", "no", "off")
+        logger.info(f"[Config Override] enable_offload <- {config.enable_offload} (from ENABLE_OFFLOAD={env_enable_offload})")
     port = config.port if args.port is None else args.port
     if args.save_root is not None:
         config.save_root = args.save_root

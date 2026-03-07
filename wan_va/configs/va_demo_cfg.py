@@ -1,4 +1,5 @@
 # Copyright 2024-2025 The Robbyant Team Authors. All rights reserved.
+import os
 import torch
 from easydict import EasyDict
 
@@ -8,7 +9,9 @@ va_demo_cfg = EasyDict(__name__='Config: VA demo')
 va_demo_cfg.update(va_shared_cfg)
 va_shared_cfg.infer_mode = 'server'
 
-va_demo_cfg.wan22_pretrained_model_name_or_path = "/path/to/pretrained/model"
+va_demo_cfg.wan22_pretrained_model_name_or_path = os.environ.get(
+    "LINGBOT_VA_MODEL_PATH", "/path/to/pretrained/model"
+)
 
 va_demo_cfg.attn_window = 30
 va_demo_cfg.frame_chunk_size = 4
