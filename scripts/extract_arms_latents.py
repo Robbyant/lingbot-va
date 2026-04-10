@@ -70,22 +70,13 @@ def _encode_video_to_latent(
 
     F = x.shape[2]
     streaming_vae.clear_cache()
-    if streaming:
-        # For very long videos only: chunk over time and keep VAE cache.
-        outs = []
-        for st in range(0, F, chunk_size):
-            x_chunk = x[:, :, st : st + chunk_size]
-            enc_out = streaming_vae.encode_chunk(x_chunk)
-            outs.append(enc_out)
-        enc_out = torch.cat(outs, dim=2)
-    else:
-        # Default: encode the full clip in one call.
-        # This matches how wan_va_server.py encodes an observation history and avoids temporal shape pitfalls.
+
+    # Default: encode the full clip in one call (same as wan_va_server.py for non-robotwin envs).
     used_stride = 1
     try:
         enc_out = streaming_vae.encode_chunk(x)
     except RuntimeError as e:
-        # Pragmatic fallback: if the WAN VAE encoder hits temporal shape mismatch for long clips,
+        # Pragmatic fallback: if the WAN VAE encoder hits temporal shape mismatch for some clips,
         # downsample frames by 2 (typical 30fps -> 15fps) and retry.
         msg = str(e)
         if "must match the size of tensor" in msg and "at non-singleton dimension 2" in msg:
