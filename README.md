@@ -139,6 +139,69 @@ export WANDB_PROJECT="va_arms"
 
 详细见 `ROCM_LIBERO_SETUP.md`（包含 EGL/osmesa、以及 client 输出落盘路径说明）。
 
+---
+
+## 今日问题与修复对照表（按实际发生顺序）
+
+这一节专门记录你今天在服务器上跑流程时遇到的报错、当时哪里跑错、以及我们最终改了哪些代码把它跑通。
+
+### A. LIBERO / 录制落盘相关
+
+- **`ModuleNotFoundError: No module named 'wan_va'`（跑 client）**
+  - **触发方式**：用 `python evaluation/libero/client.py` 直接跑文件，Python 没把仓库根目录当包路径。
+  - **正确方式**：在仓库根目录用 `python -m evaluation.libero.client ...` 或临时 `PYTHONPATH=.`。
+
+- **`pip install libero` 报 “inconsistent version”**
+  - **原因**：PyPI 的同名包元数据不一致（文件名 0.1.1 / metadata 0.1.0）。
+  - **正确安装**：装 LIBERO 官方仓库源码（`pip install -e ~/LIBERO`），见 `ROCM_LIBERO_SETUP.md` 第 3 节。
+
+- **`AttributeError: 'NoneType' object has no attribute 'eglQueryString'`（robosuite/mujoco）**
+  - **原因**：无头渲染 EGL 没配置好（系统 EGL/Mesa 依赖或环境变量缺失）。
+  - **修复**：安装 EGL/Mesa 依赖 + `PyOpenGL-accelerate`，并在启动前 `export MUJOCO_GL=egl` / `export PYOPENGL_PLATFORM=egl`。
+  - **兜底**：EGL 真不可用时走 `--mujoco-gl osmesa`（更慢但能跑）。
+
+- **“远端写不出 mp4 / ffmpeg backend”**
+  - **修复**：`pip install "imageio[ffmpeg]"`；并保留 PNG 关键帧，可在本地 `ffmpeg` 合成 mp4。
+
+- **“我想保存 mp4/png/npz（含 action + joint）”**
+  - **我们改的代码**：`evaluation/libero/client.py`
+    - **新增**：关键帧 PNG、轨迹 `.npz`（actions + joint/EEF/gripper + policy_chunks）、视频 mp4（失败回退 gif）。
+  - **落盘位置**：`--out-dir` 指定目录下（默认 `outputs/libero/...`），详见 `ROCM_LIBERO_SETUP.md` 的 7.3。
+
+### B. arms 数据集（双臂单相机）训练相关
+
+- **为什么要先提 latents 再训练？**
+  - **原因**：训练输入不是原始 RGB，而是 Wan2.2 VAE 编码后的 latent（省显存/加速/与预训练对齐）。
+  - **对应脚本**：`scripts/extract_arms_latents.py`
+
+- **`ModuleNotFoundError: No module named 'wan_va'`（提 latents 脚本）**
+  - **原因**：脚本直接运行时 import 路径不包含 repo root。
+  - **修复**：在脚本中加入 `sys.path.insert(0, repo_root)`（已在 `scripts/extract_arms_latents.py` 里做）。
+
+- **VAE temporal shape 报错（例如 conv3d kernel > input / T 不匹配）**
+  - **原因**：Wan VAE 的时间维对齐很敏感，chunk/步长/偶数长度都会影响。
+  - **修复策略（已实现）**：优先走非 streaming `vae.encode(x)`；失败时自动重试（`::2` 下采样、裁掉/补齐一帧等）。
+
+- **`ValueError: environment variable MASTER_ADDR expected, but not set`（单卡训练）**
+  - **原因**：训练入口无条件 init distributed。
+  - **修复**：`wan_va/distributed/util.py`：`world_size<=1` 时跳过 `dist.init_process_group`。
+
+- **`KeyError` / wandb 环境变量缺失导致启动失败**
+  - **修复**：`wan_va/train.py`：检测缺少 `WANDB_*` 时自动关闭 wandb（即使 config 里 True）。
+
+- **`FileNotFoundError: ./prepared_arms/empty_emb.pt`**
+  - **修复**：`wan_va/dataset/arms_latent_dataset.py`：自动从已有 latent 文件推断 `text_emb` 形状并生成 `empty_emb.pt`。
+
+- **`Cannot re-initialize CUDA in forked subprocess`（DataLoader worker）**
+  - **原因**：latent `.pth` 里可能存了 CUDA tensor 或加载时映射到 CUDA，worker fork 后触发 CUDA re-init。
+  - **修复**：
+    - `scripts/extract_arms_latents.py`：保存前 `.cpu()`；
+    - `wan_va/dataset/arms_latent_dataset.py`：`torch.load(..., map_location="cpu")`；
+    - `wan_va/configs/va_arms_train_cfg.py`：默认 `load_worker=0`。
+
+- **`flex_attention` 的 `block_mask` 长度不匹配**
+  - **修复**：`wan_va/modules/model.py`：对 mask 调用 `_adjust(q_len, kv_len)` 做裁剪对齐。
+
 
 ## ⚠️ Important: `attn_mode` Configuration
 

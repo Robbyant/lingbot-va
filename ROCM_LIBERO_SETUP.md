@@ -363,14 +363,42 @@ ffmpeg -y -framerate 60 -i frame_%06d.png -c:v libx264 -pix_fmt yuv420p out.mp4
 
 ---
 
-## 8) 重要：不要安装 lerobot（否则很容易把 ROCm 环境弄崩）
+## 8) 重要：谨慎安装 lerobot（避免把 ROCm 环境弄崩）
 
 本仓库的 `evaluation/libero/client.py` 我们已改为使用标准库 `json` 写结果文件，
-因此 **不再需要 `lerobot`**。
+因此 **跑 LIBERO 不再需要 `lerobot`**。
 
 如果你已经装过 `lerobot` 并导致出现：
 - `No module named 'flash_attn_2_cuda'`
 
 这通常意味着环境被换成了 CUDA/NVIDIA 组合。
 最稳的恢复方式是：**丢弃当前环境，重新建一个干净 venv**，按本指南重装最小依赖。
+
+如果你确实需要 `lerobot`（用于 post-training 的某些工具链），建议：
+
+```bash
+pip install --no-deps lerobot==0.3.3
+pip install scipy wandb
+```
+
+核心原则是：**不要让 pip 因为 lerobot 去自动升级/替换你的 torch/diffusers/triton 组合**。
+
+---
+
+## 9) 今日常见报错速查（LIBERO/ROCm）
+
+- **`ModuleNotFoundError: No module named 'wan_va'`**
+  - **原因**：没用 `-m` 启动（直接跑文件导致包路径丢失）。
+  - **做法**：在 repo 根目录运行 `python3 -m evaluation.libero.client ...`（见 7.2）。
+
+- **`pip install libero` 报 “inconsistent version”**
+  - **原因**：PyPI 同名包元数据问题。
+  - **做法**：安装 LIBERO 官方仓库源码（见 3）。
+
+- **`AttributeError: 'NoneType' object has no attribute 'eglQueryString'`**
+  - **原因**：EGL/Mesa 或环境变量没配好。
+  - **做法**：按 5) 配 EGL；不行就按 5.1 用 OSMesa。
+
+- **写不出 `.mp4`**
+  - **做法**：按 7.3.3 安装 `imageio[ffmpeg]`；或者只用 PNG 在本地 `ffmpeg` 合成。
 
