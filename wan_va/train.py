@@ -276,9 +276,14 @@ class Trainer:
                         self.patch_size, latent_pred,
                         input_dict['latent_dict']['targets'].shape[-3], input_dict['latent_dict']['targets'].shape[-2],
                         input_dict['latent_dict']['targets'].shape[-1], batch_size=latent_pred.shape[0])
-        Bn, Fn = input_dict['latent_dict']['timesteps'].shape
-        latent_loss_weight = self.train_scheduler_latent.training_weight(input_dict['latent_dict']['timesteps'].flatten()).reshape(Bn, Fn)
-        action_loss_weight = self.train_scheduler_action.training_weight(input_dict['action_dict']['timesteps'].flatten()).reshape(Bn, Fn)
+        Bn_l, Fn_l = input_dict["latent_dict"]["timesteps"].shape
+        Bn_a, Fn_a = input_dict["action_dict"]["timesteps"].shape
+        latent_loss_weight = self.train_scheduler_latent.training_weight(
+            input_dict["latent_dict"]["timesteps"].flatten()
+        ).reshape(Bn_l, Fn_l)
+        action_loss_weight = self.train_scheduler_action.training_weight(
+            input_dict["action_dict"]["timesteps"].flatten()
+        ).reshape(Bn_a, Fn_a)
 
         # Frame-wise video loss calculation
         latent_loss = F.mse_loss(latent_pred.float(), input_dict['latent_dict']['targets'].float().detach(), reduction='none')
