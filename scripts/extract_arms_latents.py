@@ -82,7 +82,12 @@ def _encode_video_to_latent(
         # Non-streaming encode is much more stable for short episodes (e.g. 100-200 frames).
         if getattr(vae.config, "patch_size", None) is not None:
             x = patchify(x, vae.config.patch_size)
-        enc_out = vae.quant_conv(vae.encoder(x))
+        # IMPORTANT: AutoencoderKLWan's encoder layers expect (feat_cache, feat_idx) for WanCausalConv3d
+        # to keep temporal shapes consistent. Reuse the streaming wrapper's cache layout.
+        streaming_vae.clear_cache()
+        feat_idx = [0]
+        enc_feats = streaming_vae.encoder(x, feat_cache=streaming_vae.feat_cache, feat_idx=feat_idx)
+        enc_out = streaming_vae.quant_conv(enc_feats)
 
     mu, _logvar = torch.chunk(enc_out, 2, dim=1)
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
