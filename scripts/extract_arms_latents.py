@@ -69,29 +69,51 @@ def _encode_video_to_latent(
     x = x.unsqueeze(0).to(device=device, dtype=dtype)  # 1,3,F,H,W
 
     F = x.shape[2]
-    streaming_vae.clear_cache()
+    def _try_encode(x_in: torch.Tensor) -> torch.Tensor:
+        streaming_vae.clear_cache()
+        return streaming_vae.encode_chunk(x_in)
 
-    # Default: encode the full clip in one call (same as wan_va_server.py for non-robotwin envs).
+    # Default: encode the full clip in one call.
+    # If WAN VAE hits temporal shape mismatch, retry with safer temporal layouts.
     used_stride = 1
+    used_frame_ids = None  # filled by caller
     try:
-        enc_out = streaming_vae.encode_chunk(x)
+        enc_out = _try_encode(x)
     except RuntimeError as e:
-        # Pragmatic fallback: if the WAN VAE encoder hits temporal shape mismatch for some clips,
-        # downsample frames by 2 (typical 30fps -> 15fps) and retry.
         msg = str(e)
-        if "must match the size of tensor" in msg and "at non-singleton dimension 2" in msg:
-            used_stride = 2
-            x = x[:, :, ::2].contiguous()
-            enc_out = streaming_vae.encode_chunk(x)
-        else:
+        if "must match the size of tensor" not in msg or "at non-singleton dimension 2" not in msg:
             raise
+
+        # Retry set (in order): keep stride=2, then make temporal length even (drop/pad).
+        used_stride = 2
+        x2 = x[:, :, ::2].contiguous()
+        tries = [x2]
+
+        # Make even length by dropping last if needed.
+        if x2.shape[2] % 2 == 1 and x2.shape[2] > 1:
+            tries.append(x2[:, :, :-1].contiguous())
+
+        # Or pad one frame to make even length.
+        if x2.shape[2] % 2 == 1:
+            tries.append(torch.cat([x2, x2[:, :, -1:, :, :]], dim=2))
+
+        last_err = e
+        for t in tries:
+            try:
+                enc_out = _try_encode(t)
+                x = t
+                break
+            except RuntimeError as e2:
+                last_err = e2
+        else:
+            raise last_err
 
     mu, _logvar = torch.chunk(enc_out, 2, dim=1)
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     latents_std = torch.tensor(vae.config.latents_std, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     mu_norm = ((mu.float() - latents_mean.float()) * (1.0 / latents_std.float())).to(mu.dtype)
     # Crop back to original frame count (streaming may alter length).
-    return mu_norm[:, :, :F], used_stride
+    return mu_norm[:, :, : x.shape[2]], used_stride
 
 
 @torch.no_grad()
@@ -167,7 +189,7 @@ def main():
         text_emb = _encode_text(text_encoder, tokenizer, instruction, device=device, dtype=torch.bfloat16)[0]
         # When we fallback to 2x downsample in VAE encode, frame_ids should still reflect the sampled frames.
         # For simplicity we always use every frame here; if fallback triggers, the latent's frame_ids will be subsampled.
-        frame_ids = list(range(start_frame, end_frame, used_stride))
+        frame_ids = list(range(start_frame, end_frame, used_stride))[: int(lat.shape[2])]
 
         out = {
             "latent": latent_flat,
