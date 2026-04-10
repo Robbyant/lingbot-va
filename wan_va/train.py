@@ -50,7 +50,14 @@ import gc
 class Trainer:
     def __init__(self, config):
         if config.enable_wandb and config.rank == 0:
-            wandb.login(host=os.environ['WANDB_BASE_URL'], key=os.environ['WANDB_API_KEY'])
+            # Make wandb optional in minimal server environments.
+            base_url = os.environ.get("WANDB_BASE_URL")
+            api_key = os.environ.get("WANDB_API_KEY")
+            if not base_url or not api_key:
+                logger.warning("WANDB_* env vars missing; disabling wandb logging.")
+                config.enable_wandb = False
+            else:
+                wandb.login(host=base_url, key=api_key)
             self.wandb = wandb
             self.wandb.init(
                 entity=os.environ["WANDB_TEAM_NAME"],

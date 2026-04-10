@@ -10,7 +10,8 @@ va_arms_train_cfg.update(va_arms_cfg)
 va_arms_train_cfg.dataset_path = "./prepared_arms"
 va_arms_train_cfg.empty_emb_path = os.path.join(va_arms_train_cfg.dataset_path, "empty_emb.pt")
 
-va_arms_train_cfg.enable_wandb = True
+# Default to off: server environments often don't have WANDB_* configured.
+va_arms_train_cfg.enable_wandb = False
 va_arms_train_cfg.load_worker = 8
 va_arms_train_cfg.save_interval = 200
 va_arms_train_cfg.gc_interval = 50
