@@ -43,7 +43,7 @@ from utils import (
     FlowMatchScheduler
 )
 
-from dataset import MultiLatentLeRobotDataset
+from dataset import MultiLatentLeRobotDataset, ArmsLatentDataset
 import gc
 
 
@@ -118,7 +118,11 @@ class Trainer:
 
         # Setup dataloaders
         logger.info("Setting up datasets...")
-        train_dataset = MultiLatentLeRobotDataset(config=config)
+        dataset_format = getattr(config, "dataset_format", "lerobot")
+        if dataset_format == "arms":
+            train_dataset = ArmsLatentDataset(config=config)
+        else:
+            train_dataset = MultiLatentLeRobotDataset(config=config)
         train_sampler = DistributedSampler(
             train_dataset,
             num_replicas=config.world_size,

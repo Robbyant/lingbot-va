@@ -1,0 +1,12 @@
+prepared_arms/
+arms/
+
+# local outputs / artifacts
+0_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket/
+outputs/
+
+# python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
