@@ -69,25 +69,19 @@ def _encode_video_to_latent(
     x = x.unsqueeze(0).to(device=device, dtype=dtype)  # 1,3,F,H,W
 
     F = x.shape[2]
+    streaming_vae.clear_cache()
     if streaming:
-        streaming_vae.clear_cache()
+        # For very long videos only: chunk over time and keep VAE cache.
         outs = []
         for st in range(0, F, chunk_size):
             x_chunk = x[:, :, st : st + chunk_size]
-            # NOTE: Streaming path is sensitive to chunking; keep only for very long videos.
             enc_out = streaming_vae.encode_chunk(x_chunk)
             outs.append(enc_out)
         enc_out = torch.cat(outs, dim=2)
     else:
-        # Non-streaming encode is much more stable for short episodes (e.g. 100-200 frames).
-        if getattr(vae.config, "patch_size", None) is not None:
-            x = patchify(x, vae.config.patch_size)
-        # IMPORTANT: AutoencoderKLWan's encoder layers expect (feat_cache, feat_idx) for WanCausalConv3d
-        # to keep temporal shapes consistent. Reuse the streaming wrapper's cache layout.
-        streaming_vae.clear_cache()
-        feat_idx = [0]
-        enc_feats = streaming_vae.encoder(x, feat_cache=streaming_vae.feat_cache, feat_idx=feat_idx)
-        enc_out = streaming_vae.quant_conv(enc_feats)
+        # Default: encode the full clip in one call.
+        # This matches how wan_va_server.py encodes an observation history and avoids temporal shape pitfalls.
+        enc_out = streaming_vae.encode_chunk(x)
 
     mu, _logvar = torch.chunk(enc_out, 2, dim=1)
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
