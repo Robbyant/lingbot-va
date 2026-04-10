@@ -72,13 +72,34 @@ def _encode_video_to_latent(
     F = x.shape[2]
     for st in range(0, F, chunk_size):
         x_chunk = x[:, :, st : st + chunk_size]
-        # AutoencoderKLWan streaming encoder expects a fixed temporal chunk size.
-        # Pad the last chunk by repeating the last frame to avoid shape mismatches.
+        orig_len = x_chunk.shape[2]
+
+        # AutoencoderKLWan uses a temporal kernel of size 3 in streaming convs.
+        # For the very first chunk, caches are empty, so we must ensure input has >=3 frames.
+        # We do this by prefix-padding with the first frame, then slice outputs back.
+        prefix_padded = False
+        if st == 0 and orig_len < 3:
+            pad_n = 3 - orig_len
+            first = x_chunk[:, :, :1, :, :].repeat(1, 1, pad_n, 1, 1)
+            x_chunk = torch.cat([first, x_chunk], dim=2)
+            prefix_padded = True
+
+        # Pad the last chunk by repeating the last frame to reach chunk_size.
+        suffix_padded = False
         if x_chunk.shape[2] < chunk_size:
             pad_n = chunk_size - x_chunk.shape[2]
             last = x_chunk[:, :, -1:, :, :].repeat(1, 1, pad_n, 1, 1)
             x_chunk = torch.cat([x_chunk, last], dim=2)
+            suffix_padded = True
+
         enc_out = streaming_vae.encode_chunk(x_chunk)
+
+        # Slice back to the original (unpadded) temporal length.
+        if prefix_padded:
+            enc_out = enc_out[:, :, -orig_len:]
+        if suffix_padded:
+            enc_out = enc_out[:, :, :orig_len]
+
         outs.append(enc_out)
     enc_out = torch.cat(outs, dim=2)  # 1,2C,F,H',W'
 
