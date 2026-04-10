@@ -16,7 +16,8 @@ va_arms_train_cfg.wan22_pretrained_model_name_or_path = "/root/checkpoints/lingb
 
 # Default to off: server environments often don't have WANDB_* configured.
 va_arms_train_cfg.enable_wandb = False
-va_arms_train_cfg.load_worker = 8
+# Single-GPU default: avoid multiprocessing CUDA issues when loading .pth files.
+va_arms_train_cfg.load_worker = 0
 va_arms_train_cfg.save_interval = 200
 va_arms_train_cfg.gc_interval = 50
 va_arms_train_cfg.cfg_prob = 0.1

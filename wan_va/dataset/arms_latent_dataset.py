@@ -131,7 +131,7 @@ class ArmsLatentDataset(torch.utils.data.Dataset):
             f"latent file not found: {latent_file}\n"
             "You need to extract Wan2.2 VAE latents into dataset_root/latents/ mirroring videos/."
         )
-        return torch.load(latent_file, weights_only=False)
+        return torch.load(latent_file, weights_only=False, map_location="cpu")
 
     def _load_actions(self, episode_index: int) -> np.ndarray:
         ap = self.actions_path / f"episode_{episode_index:06d}.npy"

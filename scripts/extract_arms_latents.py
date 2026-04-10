@@ -194,9 +194,9 @@ def main():
         # Flatten to [N,C] as repo README expects.
         lat_fhwc = lat[0].permute(1, 2, 3, 0).contiguous()  # F,h,w,C
         latent_num_frames, latent_height, latent_width = lat_fhwc.shape[:3]
-        latent_flat = rearrange(lat_fhwc, "f h w c -> (f h w) c").to(torch.bfloat16)
+        latent_flat = rearrange(lat_fhwc, "f h w c -> (f h w) c").to(torch.bfloat16).cpu()
 
-        text_emb = _encode_text(text_encoder, tokenizer, instruction, device=device, dtype=torch.bfloat16)[0]
+        text_emb = _encode_text(text_encoder, tokenizer, instruction, device=device, dtype=torch.bfloat16)[0].cpu()
         # When we fallback to 2x downsample in VAE encode, frame_ids should still reflect the sampled frames.
         # For simplicity we always use every frame here; if fallback triggers, the latent's frame_ids will be subsampled.
         frame_ids = list(range(start_frame, end_frame, used_stride))[: int(lat.shape[2])]
