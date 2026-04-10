@@ -69,8 +69,15 @@ def _encode_video_to_latent(
 
     streaming_vae.clear_cache()
     outs = []
-    for st in range(0, x.shape[2], chunk_size):
+    F = x.shape[2]
+    for st in range(0, F, chunk_size):
         x_chunk = x[:, :, st : st + chunk_size]
+        # AutoencoderKLWan streaming encoder expects a fixed temporal chunk size.
+        # Pad the last chunk by repeating the last frame to avoid shape mismatches.
+        if x_chunk.shape[2] < chunk_size:
+            pad_n = chunk_size - x_chunk.shape[2]
+            last = x_chunk[:, :, -1:, :, :].repeat(1, 1, pad_n, 1, 1)
+            x_chunk = torch.cat([x_chunk, last], dim=2)
         enc_out = streaming_vae.encode_chunk(x_chunk)
         outs.append(enc_out)
     enc_out = torch.cat(outs, dim=2)  # 1,2C,F,H',W'
@@ -79,7 +86,8 @@ def _encode_video_to_latent(
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     latents_std = torch.tensor(vae.config.latents_std, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     mu_norm = ((mu.float() - latents_mean.float()) * (1.0 / latents_std.float())).to(mu.dtype)
-    return mu_norm
+    # Crop back to original frame count in case we padded.
+    return mu_norm[:, :, :F]
 
 
 @torch.no_grad()
@@ -98,7 +106,7 @@ def main():
     ap.add_argument("--dtype", type=str, default="bfloat16", choices=["float16", "bfloat16", "float32"])
     ap.add_argument("--height", type=int, default=256)
     ap.add_argument("--width", type=int, default=256)
-    ap.add_argument("--chunk-size", type=int, default=4, help="frames per streaming VAE chunk")
+    ap.add_argument("--chunk-size", type=int, default=2, help="frames per streaming VAE chunk (AutoencoderKLWan streaming is stable with 2)")
     args = ap.parse_args()
 
     dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[args.dtype]
