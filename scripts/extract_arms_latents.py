@@ -71,6 +71,16 @@ def _encode_video_to_latent(
     F = x.shape[2]
     def _try_encode(x_in: torch.Tensor) -> torch.Tensor:
         streaming_vae.clear_cache()
+        # Prefer native VAE encode path if available; it handles temporal shapes internally.
+        if hasattr(vae, "encode"):
+            posterior = vae.encode(x_in)
+            if hasattr(posterior, "latent_dist") and hasattr(posterior.latent_dist, "mean"):
+                mu = posterior.latent_dist.mean
+                # Match streaming_vae.encode_chunk output convention: quant_conv output (2C) split later.
+                # Here we return a fake "enc_out" by concatenating mu/logvar-like tensors.
+                # logvar is not used downstream, so zeros is fine.
+                zeros = torch.zeros_like(mu)
+                return torch.cat([mu, zeros], dim=1)
         return streaming_vae.encode_chunk(x_in)
 
     # Default: encode the full clip in one call.
