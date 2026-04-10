@@ -314,10 +314,12 @@ class Trainer:
         
         should_sync = (batch_idx + 1) % self.gradient_accumulation_steps == 0
         
-        if not should_sync:
-            self.transformer.set_requires_gradient_sync(False)
-        else:
-            self.transformer.set_requires_gradient_sync(True)
+        # Only FSDP-wrapped models have set_requires_gradient_sync.
+        if hasattr(self.transformer, "set_requires_gradient_sync"):
+            if not should_sync:
+                self.transformer.set_requires_gradient_sync(False)
+            else:
+                self.transformer.set_requires_gradient_sync(True)
 
         output = self.transformer(input_dict, train_mode=True)
         latent_loss, action_loss = self.compute_loss(input_dict, output)
