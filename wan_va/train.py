@@ -43,7 +43,7 @@ from utils import (
     FlowMatchScheduler
 )
 
-from dataset import MultiLatentLeRobotDataset, ArmsLatentDataset
+from wan_va.dataset.arms_latent_dataset import ArmsLatentDataset
 import gc
 
 
@@ -122,6 +122,9 @@ class Trainer:
         if dataset_format == "arms":
             train_dataset = ArmsLatentDataset(config=config)
         else:
+            # Import LeRobot-based dataset only when needed to avoid forcing
+            # the heavy `lerobot/datasets` dependency for arms-only training.
+            from wan_va.dataset.lerobot_latent_dataset import MultiLatentLeRobotDataset
             train_dataset = MultiLatentLeRobotDataset(config=config)
         train_sampler = DistributedSampler(
             train_dataset,
