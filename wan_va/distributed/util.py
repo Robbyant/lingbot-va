@@ -22,12 +22,18 @@ def _configure_model(model, shard_fn, param_dtype, device, eval_mode=True):
 
 
 def init_distributed(world_size, local_rank, rank):
-    # if world_size > 1:
+    # Single-process training: do not require env:// rendezvous variables.
+    if world_size is None or int(world_size) <= 1:
+        torch.cuda.set_device(local_rank)
+        return
+
     torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl",
-                            init_method="env://",
-                            rank=rank,
-                            world_size=world_size)
+    dist.init_process_group(
+        backend="nccl",
+        init_method="env://",
+        rank=rank,
+        world_size=world_size,
+    )
 
 def dist_mean(local_tensor):
     if dist.is_initialized():
