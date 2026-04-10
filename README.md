@@ -66,6 +66,79 @@ pip install websockets einops diffusers==0.36.0 transformers==4.55.2 accelerate 
 pip install flash-attn --no-build-isolation
 ```
 
+---
+
+## 我们的改动（arms + ROCm）
+
+本仓库在上游基础上，增加了适配 **AMD ROCm（MI300X）** 与自定义双臂单相机数据集 **`arms/`** 的训练/数据准备流程，并把远程 LIBERO client 的落盘能力补齐（mp4/png/npz/action/joint）。
+
+### 快速开始（MI300X / ROCm 7.2）
+
+#### 1) 安装依赖
+
+```bash
+python3 -m venv ~/venvs/lingbot-va
+source ~/venvs/lingbot-va/bin/activate
+python -m pip install -U pip
+
+# 大 wheel 建议关缓存，避免 pip 报 Memoryview is too large
+PIP_NO_CACHE_DIR=1 pip install -r requirements.txt
+```
+
+#### 2) 准备 arms 数据
+
+```bash
+python scripts/prepare_arms_dataset.py --arms-root ./arms --split train --out ./prepared_arms
+```
+
+#### 3) 下载 checkpoint（lingbot-va-base）
+
+```bash
+pip install -U huggingface_hub
+hf download --repo-type model robbyant/lingbot-va-base --local-dir /root/checkpoints/lingbot-va-base
+```
+
+#### 4) 提取 VAE latents
+
+```bash
+python scripts/extract_arms_latents.py \
+  --dataset-root ./prepared_arms \
+  --ckpt-dir /root/checkpoints/lingbot-va-base \
+  --device cuda \
+  --dtype bfloat16 \
+  --height 256 --width 256
+```
+
+#### 5) 单卡微调训练（post-training）
+
+```bash
+export TORCHDYNAMO_DISABLE=1   # 更稳（先跑通）
+python -m wan_va.train --config-name arms_train --save-root ./train_out_arms
+```
+
+建议用 `tmux` 运行，防止断网中断：
+
+```bash
+tmux new -s arms_train
+# 运行训练命令后，Ctrl+b 再按 d 退出但继续跑
+```
+
+### WandB（可选）
+
+`arms_train` 默认启用 wandb；若缺少 `WANDB_*` 会自动降级关闭。
+要开启请设置：
+
+```bash
+export WANDB_BASE_URL="https://api.wandb.ai"
+export WANDB_API_KEY="..."
+export WANDB_TEAM_NAME="..."
+export WANDB_PROJECT="va_arms"
+```
+
+### LIBERO（录制 mp4/png/npz）
+
+详细见 `ROCM_LIBERO_SETUP.md`（包含 EGL/osmesa、以及 client 输出落盘路径说明）。
+
 
 ## ⚠️ Important: `attn_mode` Configuration
 

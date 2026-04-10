@@ -29,7 +29,7 @@ git lfs install
 - 目标是先把 `evaluation/libero` 的 **server/client 流程跑通**
 
 这份指南重点解决你遇到的两个坑：
-- **不要安装 `lerobot`**：它会拉 CUDA/NVIDIA 相关依赖，导致 `torch/diffusers/flash-attn/triton` 被替换，从而在 ROCm 上炸（例如 `flash_attn_2_cuda`）。
+- **谨慎安装 `lerobot`**：在 ROCm 环境中不建议让 `pip` 自动解析/升级它的依赖链，以免把 ROCm 的 torch 组合替换掉。推荐在装好 ROCm torch 后使用 `pip install --no-deps lerobot==0.3.3`，并把额外依赖（如 `scipy`、`wandb`）单独安装。
 - LIBERO 仿真依赖链较长，按下面“一次装齐最小集合”做。
 - 如果你选择装 `flash-attn`：**在 AMD/ROCm 上应走 Triton 后端**（aiter JIT），并避免“在错误目录执行 pip install .”把项目打成 `UNKNOWN` 包。
 
