@@ -37,6 +37,5 @@ gym==0.26.2
 gymnasium
 
 # Post-training
-lerobot==0.3.3
 scipy
 wandb

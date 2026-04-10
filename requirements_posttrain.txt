@@ -1,0 +1,14 @@
+# Post-training extras (safe on ROCm)
+#
+# IMPORTANT (ROCm/AMD):
+# - Install ROCm PyTorch first (per requirements.txt).
+# - Then install lerobot WITHOUT deps to avoid pip swapping your torch build.
+#
+# Recommended:
+#   pip install -r requirements.txt
+#   pip install -r requirements_posttrain.txt
+#
+lerobot==0.3.3 --no-deps
+scipy
+wandb
+
