@@ -21,6 +21,10 @@ va_arms_cfg.width = 256
 va_arms_cfg.attn_window = 72
 va_arms_cfg.frame_chunk_size = 4
 
+# FlowMatch schedulers
+va_arms_cfg.snr_shift = 5.0
+va_arms_cfg.action_snr_shift = 1.0
+
 # Action format follows repo README "30 dims" standard. For release we mostly fill joint channels.
 va_arms_cfg.action_dim = 30
 va_arms_cfg.action_per_frame = 4
