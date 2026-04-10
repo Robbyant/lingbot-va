@@ -1,12 +1,20 @@
-torch==2.9.0
-torchvision==0.24.0
-torchaudio==2.9.0
+# ROCm (AMD) install tip:
+# Use ROCm wheels first, then fall back to PyPI for the rest.
+# If your ROCm version differs (e.g. rocm6.3/7.0), change the URL accordingly.
+--index-url https://download.pytorch.org/whl/rocm7.2
+--extra-index-url https://pypi.org/simple
+
+torch
+torchvision
+# torchaudio wheels are not always available for ROCm; install separately if needed.
+# torchaudio
 diffusers==0.36.0
 transformers==4.55.2
 accelerate
 einops
 easydict
-flash_attn
+# flash_attn is optional; on ROCm it typically falls back to Triton or may fail to build.
+# flash_attn
 numpy==1.26.4
 tqdm
 imageio[ffmpeg]
@@ -17,6 +25,16 @@ matplotlib
 ftfy
 safetensors
 Pillow
+
+# LIBERO / MuJoCo (headless simulation)
+mujoco==3.1.5
+robosuite==1.4.1
+PyOpenGL
+PyOpenGL-accelerate
+bddl
+cloudpickle
+gym==0.26.2
+gymnasium
 
 # Post-training
 lerobot==0.3.3
