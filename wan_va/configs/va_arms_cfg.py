@@ -13,6 +13,14 @@ va_arms_cfg.dataset_format = "arms"
 va_arms_cfg.env_type = "arms"
 va_arms_cfg.obs_cam_keys = ["observation.images.cam_high"]
 
+# Video size used for VAE latent extraction / training.
+va_arms_cfg.height = 256
+va_arms_cfg.width = 256
+
+# Transformer temporal settings (match your data / sampling later if needed).
+va_arms_cfg.attn_window = 72
+va_arms_cfg.frame_chunk_size = 4
+
 # Action format follows repo README "30 dims" standard. For release we mostly fill joint channels.
 va_arms_cfg.action_dim = 30
 va_arms_cfg.action_per_frame = 4
