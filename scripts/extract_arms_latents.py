@@ -81,14 +81,26 @@ def _encode_video_to_latent(
     else:
         # Default: encode the full clip in one call.
         # This matches how wan_va_server.py encodes an observation history and avoids temporal shape pitfalls.
+    used_stride = 1
+    try:
         enc_out = streaming_vae.encode_chunk(x)
+    except RuntimeError as e:
+        # Pragmatic fallback: if the WAN VAE encoder hits temporal shape mismatch for long clips,
+        # downsample frames by 2 (typical 30fps -> 15fps) and retry.
+        msg = str(e)
+        if "must match the size of tensor" in msg and "at non-singleton dimension 2" in msg:
+            used_stride = 2
+            x = x[:, :, ::2].contiguous()
+            enc_out = streaming_vae.encode_chunk(x)
+        else:
+            raise
 
     mu, _logvar = torch.chunk(enc_out, 2, dim=1)
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     latents_std = torch.tensor(vae.config.latents_std, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     mu_norm = ((mu.float() - latents_mean.float()) * (1.0 / latents_std.float())).to(mu.dtype)
     # Crop back to original frame count (streaming may alter length).
-    return mu_norm[:, :, :F]
+    return mu_norm[:, :, :F], used_stride
 
 
 @torch.no_grad()
@@ -144,7 +156,7 @@ def main():
             end_frame = min(end_frame, frames_rgb.shape[0])
             frames_rgb = frames_rgb[:end_frame]
 
-        lat = _encode_video_to_latent(
+        lat, used_stride = _encode_video_to_latent(
             vae,
             streaming_vae,
             frames_rgb,
@@ -162,7 +174,9 @@ def main():
         latent_flat = rearrange(lat_fhwc, "f h w c -> (f h w) c").to(torch.bfloat16)
 
         text_emb = _encode_text(text_encoder, tokenizer, instruction, device=device, dtype=torch.bfloat16)[0]
-        frame_ids = list(range(start_frame, end_frame))
+        # When we fallback to 2x downsample in VAE encode, frame_ids should still reflect the sampled frames.
+        # For simplicity we always use every frame here; if fallback triggers, the latent's frame_ids will be subsampled.
+        frame_ids = list(range(start_frame, end_frame, used_stride))
 
         out = {
             "latent": latent_flat,
