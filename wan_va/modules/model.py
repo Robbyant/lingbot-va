@@ -77,6 +77,16 @@ class FlexAttnFunc(nn.Module):
         k_varlen = k_varlen.to(v_varlen.dtype)
 
         block_mask = FlexAttnFunc.cross_attention_mask if self.is_cross else FlexAttnFunc.attention_mask
+        # The precomputed block mask may be larger than the actual q/kv lengths
+        # for the current batch/sequence. Crop it to the current lengths.
+        q_len = q_varlen.shape[2]
+        kv_len = k_varlen.shape[2]
+        if block_mask is not None and hasattr(block_mask, "_adjust"):
+            try:
+                block_mask = block_mask._adjust(q_len, kv_len)
+            except Exception:
+                # Fall back to original mask if adjust fails.
+                pass
 
         x_out = FlexAttnFunc.flex_attn(q_varlen, k_varlen, v_varlen, block_mask=block_mask, kernel_options = {
                                                     "BLOCK_M": 64,
