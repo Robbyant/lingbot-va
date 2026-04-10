@@ -25,7 +25,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from wan_va.modules.utils import WanVAEStreamingWrapper, load_text_encoder, load_tokenizer, load_vae
+from wan_va.modules.utils import WanVAEStreamingWrapper, load_text_encoder, load_tokenizer, load_vae, patchify
 
 
 def _read_video_rgb(path: Path) -> tuple[np.ndarray, float]:
@@ -57,6 +57,7 @@ def _encode_video_to_latent(
     device: torch.device,
     dtype: torch.dtype,
     chunk_size: int,
+    streaming: bool,
 ) -> torch.Tensor:
     """
     Returns normalized mean latents: [1, C, F, H', W'] (H'/W' ~ height//16,width//16).
@@ -67,47 +68,27 @@ def _encode_video_to_latent(
     x = (x / 255.0) * 2.0 - 1.0
     x = x.unsqueeze(0).to(device=device, dtype=dtype)  # 1,3,F,H,W
 
-    streaming_vae.clear_cache()
-    outs = []
     F = x.shape[2]
-    for st in range(0, F, chunk_size):
-        x_chunk = x[:, :, st : st + chunk_size]
-        orig_len = x_chunk.shape[2]
-
-        # AutoencoderKLWan uses a temporal kernel of size 3 in streaming convs.
-        # For the very first chunk, caches are empty, so we must ensure input has >=3 frames.
-        # We do this by prefix-padding with the first frame, then slice outputs back.
-        prefix_padded = False
-        if st == 0 and orig_len < 3:
-            pad_n = 3 - orig_len
-            first = x_chunk[:, :, :1, :, :].repeat(1, 1, pad_n, 1, 1)
-            x_chunk = torch.cat([first, x_chunk], dim=2)
-            prefix_padded = True
-
-        # Pad the last chunk by repeating the last frame to reach chunk_size.
-        suffix_padded = False
-        if x_chunk.shape[2] < chunk_size:
-            pad_n = chunk_size - x_chunk.shape[2]
-            last = x_chunk[:, :, -1:, :, :].repeat(1, 1, pad_n, 1, 1)
-            x_chunk = torch.cat([x_chunk, last], dim=2)
-            suffix_padded = True
-
-        enc_out = streaming_vae.encode_chunk(x_chunk)
-
-        # Slice back to the original (unpadded) temporal length.
-        if prefix_padded:
-            enc_out = enc_out[:, :, -orig_len:]
-        if suffix_padded:
-            enc_out = enc_out[:, :, :orig_len]
-
-        outs.append(enc_out)
-    enc_out = torch.cat(outs, dim=2)  # 1,2C,F,H',W'
+    if streaming:
+        streaming_vae.clear_cache()
+        outs = []
+        for st in range(0, F, chunk_size):
+            x_chunk = x[:, :, st : st + chunk_size]
+            # NOTE: Streaming path is sensitive to chunking; keep only for very long videos.
+            enc_out = streaming_vae.encode_chunk(x_chunk)
+            outs.append(enc_out)
+        enc_out = torch.cat(outs, dim=2)
+    else:
+        # Non-streaming encode is much more stable for short episodes (e.g. 100-200 frames).
+        if getattr(vae.config, "patch_size", None) is not None:
+            x = patchify(x, vae.config.patch_size)
+        enc_out = vae.quant_conv(vae.encoder(x))
 
     mu, _logvar = torch.chunk(enc_out, 2, dim=1)
     latents_mean = torch.tensor(vae.config.latents_mean, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     latents_std = torch.tensor(vae.config.latents_std, device=mu.device, dtype=mu.dtype).view(1, -1, 1, 1, 1)
     mu_norm = ((mu.float() - latents_mean.float()) * (1.0 / latents_std.float())).to(mu.dtype)
-    # Crop back to original frame count in case we padded.
+    # Crop back to original frame count (streaming may alter length).
     return mu_norm[:, :, :F]
 
 
@@ -128,6 +109,7 @@ def main():
     ap.add_argument("--height", type=int, default=256)
     ap.add_argument("--width", type=int, default=256)
     ap.add_argument("--chunk-size", type=int, default=2, help="frames per streaming VAE chunk (AutoencoderKLWan streaming is stable with 2)")
+    ap.add_argument("--streaming", action="store_true", help="Use streaming VAE encode (only needed for very long videos).")
     args = ap.parse_args()
 
     dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}[args.dtype]
@@ -172,6 +154,7 @@ def main():
             device=device,
             dtype=dtype,
             chunk_size=args.chunk_size,
+            streaming=args.streaming,
         )  # [1,C,F,h,w]
 
         # Flatten to [N,C] as repo README expects.
