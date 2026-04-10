@@ -68,6 +68,10 @@ class Trainer:
                 name='test_lln'
                 # name=os.path.basename(os.path.normpath(job_config.job.dump_folder))
             )
+            # Make sure charts use the same global step.
+            # Also log "flat" metric names in addition to nested keys so W&B auto-panels pick them up.
+            self.wandb.define_metric("step")
+            self.wandb.define_metric("*", step_metric="step")
             logger.info("WandB logging enabled")
         self.step = 0
         self.config = config
@@ -512,10 +516,14 @@ class Trainer:
                     })
                     if self.config.enable_wandb:
                         self.wandb.log({
+                            'step': self.step,
                             'loss_metrics/global_avg_video_loss': latent_loss_show,
                             'loss_metrics/global_avg_action_loss': action_loss_show,
                             'loss_metrics/global_max_video_loss': max_latent_loss_show,
                             'loss_metrics/global_max_action_loss': max_action_loss_show,
+                            # Flat keys (easier to find in W&B UI)
+                            'latent_loss': latent_loss_show,
+                            'action_loss': action_loss_show,
                             'grad_norm': total_norm.item(),
                             'lr': lr,
                         }, step=self.step)
