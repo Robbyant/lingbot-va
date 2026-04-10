@@ -21,6 +21,12 @@ va_arms_cfg.width = 256
 va_arms_cfg.attn_window = 72
 va_arms_cfg.frame_chunk_size = 4
 
+# Training-time clip length control.
+# ArmsLatentDataset will, by default, randomly crop a fixed number of *latent frames*
+# from each episode to keep sequence length bounded (helps avoid OOM on long episodes).
+# Set to None / 0 to disable cropping and use full episodes.
+va_arms_cfg.train_latent_frames = 24
+
 # FlowMatch schedulers
 va_arms_cfg.snr_shift = 5.0
 va_arms_cfg.action_snr_shift = 1.0

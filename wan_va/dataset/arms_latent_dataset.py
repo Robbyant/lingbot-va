@@ -179,6 +179,16 @@ class ArmsLatentDataset(torch.utils.data.Dataset):
         frame_ids = latent_dict["frame_ids"]
 
         lat = rearrange(latent, "(f h w) c -> f h w c", f=latent_num_frames, h=latent_height, w=latent_width)
+        # Optional training-time random crop in *latent frame* space to bound sequence length and memory.
+        train_latent_frames = int(getattr(self.config, "train_latent_frames", 0) or 0)
+        if train_latent_frames > 0 and latent_num_frames > train_latent_frames:
+            max_start = latent_num_frames - train_latent_frames
+            start_l = int(torch.randint(0, max_start + 1, (1,)).item())
+            end_l = start_l + train_latent_frames
+            lat = lat[start_l:end_l]
+            frame_ids = frame_ids[start_l:end_l]
+            latent_num_frames = train_latent_frames
+
         lat = lat.permute(3, 0, 1, 2)  # C,F,H,W
 
         text_emb = latent_dict["text_emb"]
@@ -186,8 +196,13 @@ class ArmsLatentDataset(torch.utils.data.Dataset):
             text_emb = self.empty_emb
 
         actions_full = self._load_actions(s.episode_index)
-        actions_seg = actions_full[s.start_frame:s.end_frame]
-        actions_aligned, actions_mask = self._action_post_process(s.start_frame, s.end_frame, frame_ids, actions_seg)
+        # Align actions to the (possibly cropped) latent frame ids.
+        seg_start = int(frame_ids[0])
+        seg_end = int(frame_ids[-1]) + 1
+        seg_start = max(seg_start, 0)
+        seg_end = min(seg_end, actions_full.shape[0])
+        actions_seg = actions_full[seg_start:seg_end]
+        actions_aligned, actions_mask = self._action_post_process(seg_start, seg_end, frame_ids, actions_seg)
 
         return {
             "latents": lat,
