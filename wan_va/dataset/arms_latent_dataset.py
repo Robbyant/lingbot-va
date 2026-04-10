@@ -61,7 +61,24 @@ class ArmsLatentDataset(torch.utils.data.Dataset):
         self.used_video_keys = list(config.obs_cam_keys)
         assert len(self.used_video_keys) == 1, "release dataset expects a single camera key"
 
-        self.empty_emb = torch.load(config.empty_emb_path, weights_only=False)
+        empty_emb_path = Path(config.empty_emb_path)
+        if not empty_emb_path.exists():
+            # Create a compatible empty embedding from the first latent file's text_emb.
+            # This avoids requiring users to manually provide empty_emb.pt.
+            latent_dir = self.root / "latents" / "chunk-000" / self.used_video_keys[0]
+            first_pth = next(iter(sorted(latent_dir.glob("episode_*.pth"))), None)
+            if first_pth is None:
+                raise FileNotFoundError(
+                    f"empty_emb.pt not found at {empty_emb_path} and no latent files under {latent_dir} "
+                    "to infer embedding shape. Please run latent extraction first."
+                )
+            sample = torch.load(first_pth, weights_only=False)
+            text_emb = sample.get("text_emb", None)
+            if text_emb is None:
+                raise KeyError(f"'text_emb' missing in latent file: {first_pth}")
+            empty_emb_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(torch.zeros_like(text_emb), empty_emb_path)
+        self.empty_emb = torch.load(empty_emb_path, weights_only=False)
         self.cfg_prob = getattr(config, "cfg_prob", 0.0)
 
         self.q01, self.q99 = _load_norm_stat(self.root, config.norm_stat)
