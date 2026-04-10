@@ -10,6 +10,10 @@ va_arms_train_cfg.update(va_arms_cfg)
 va_arms_train_cfg.dataset_path = "./prepared_arms"
 va_arms_train_cfg.empty_emb_path = os.path.join(va_arms_train_cfg.dataset_path, "empty_emb.pt")
 
+# Pretrained checkpoint root containing transformer/vae/tokenizer/text_encoder.
+# Set this to your downloaded lingbot-va-base path on the training machine.
+va_arms_train_cfg.wan22_pretrained_model_name_or_path = "/root/checkpoints/lingbot-va-base"
+
 # Default to off: server environments often don't have WANDB_* configured.
 va_arms_train_cfg.enable_wandb = False
 va_arms_train_cfg.load_worker = 8
