@@ -382,7 +382,6 @@ pip install scipy wandb
 ```
 
 核心原则是：**不要让 pip 因为 lerobot 去自动升级/替换你的 torch/diffusers/triton 组合**。
-
 ---
 
 ## 9) 今日常见报错速查（LIBERO/ROCm）

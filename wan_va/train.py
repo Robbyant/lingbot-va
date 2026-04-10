@@ -158,8 +158,8 @@ class Trainer:
 
         self.gradient_accumulation_steps = getattr(config, 'gradient_accumulation_steps', 1)
         self.train_loader_iter = None
-        # if hasattr(config, 'resume_from') and config.resume_from:
-        #     self._load_training_state(config.resume_from)
+        if hasattr(config, "resume_from") and config.resume_from:
+            self._load_training_state(config.resume_from)
     
     def _get_next_batch(self):
         """Get next batch from iterator, reset if epoch is finished."""
@@ -356,10 +356,11 @@ class Trainer:
                 options=StateDictOptions(full_state_dict=True, cpu_offload=True),
             )
             state_dict_bf16 = {k: v.to(torch.bfloat16) for k, v in state_dict.items()}
-            # optim_state = get_optimizer_state_dict(
-            #         self.transformer, self.optimizer,
-            #         options=StateDictOptions(full_state_dict=True, cpu_offload=True),
-            #     )
+            optim_state = get_optimizer_state_dict(
+                self.transformer,
+                self.optimizer,
+                options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+            )
 
             # Only rank 0 saves the checkpoint
             if self.config.rank == 0:
@@ -384,14 +385,18 @@ class Trainer:
                 with open(config_file, 'w') as f:
                     json.dump(config_dict, f, indent=2)
 
-                # # Save optimizer state and training metadata in PyTorch format
-                # training_state_path = checkpoint_dir / "training_state.pt"
-                # logger.info(f"Saving training state to {training_state_path}")
-                # torch.save({
-                #     'step': self.step,
-                #     'optimizer_state_dict': optim_state,
-                #     'config': vars(self.config),
-                # }, training_state_path)
+                # Save optimizer/lr_scheduler/step for resume.
+                training_state_path = checkpoint_dir / "training_state.pt"
+                logger.info(f"Saving training state to {training_state_path}")
+                torch.save(
+                    {
+                        "step": self.step,
+                        "optimizer_state_dict": optim_state,
+                        "lr_scheduler_state_dict": self.lr_scheduler.state_dict(),
+                        "config": dict(self.config),
+                    },
+                    training_state_path,
+                )
 
                 logger.info(f"Checkpoint saved successfully at step {self.step}")
 
@@ -430,6 +435,12 @@ class Trainer:
             optim_state_dict=training_state['optimizer_state_dict'],
             options=StateDictOptions(full_state_dict=True, strict=False)
         )
+        if "lr_scheduler_state_dict" in training_state:
+            try:
+                self.lr_scheduler.load_state_dict(training_state["lr_scheduler_state_dict"])
+            except Exception as e:
+                if self.config.rank == 0:
+                    logger.warning(f"Failed to load lr_scheduler state, continuing. Error: {e}")
         self.step = training_state.get('step', 0)
 
         if self.config.rank == 0:
@@ -540,6 +551,37 @@ def run(args):
     if args.save_root is not None:
         config.save_root = args.save_root
 
+    def _find_latest_checkpoint(ckpt_root: Path):
+        if not ckpt_root.exists():
+            return None
+        best_step = None
+        best_path = None
+        for p in ckpt_root.glob("checkpoint_step_*"):
+            try:
+                step = int(p.name.split("_")[-1])
+            except Exception:
+                continue
+            if best_step is None or step > best_step:
+                best_step = step
+                best_path = p
+        return str(best_path) if best_path is not None else None
+
+    if getattr(args, "resume", False):
+        ckpt_root = Path(config.save_root) / "checkpoints"
+        latest = _find_latest_checkpoint(ckpt_root)
+        if latest:
+            config.resume_from = latest
+            if rank == 0:
+                logger.info(f"Auto-resume enabled. Using latest checkpoint: {latest}")
+        else:
+            if rank == 0:
+                logger.warning(f"--resume was set but no checkpoints found under {ckpt_root}. Starting fresh.")
+
+    if getattr(args, "resume_from", None):
+        config.resume_from = args.resume_from
+        if rank == 0:
+            logger.info(f"Resuming from checkpoint (explicit): {config.resume_from}")
+
     if rank == 0:
         logger.info(f"Using config: {args.config_name}")
         logger.info(f"World size: {world_size}, Local rank: {local_rank}")
@@ -562,6 +604,18 @@ def main():
         type=str,
         default=None,
         help="Root directory for saving checkpoints",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume training from the latest checkpoint under <save_root>/checkpoints/",
+    )
+    parser.add_argument(
+        "--resume-from",
+        dest="resume_from",
+        type=str,
+        default=None,
+        help="Resume training from a specific checkpoint directory (e.g. .../checkpoints/checkpoint_step_2000)",
     )
 
     args = parser.parse_args()
