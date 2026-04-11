@@ -139,6 +139,34 @@ export WANDB_PROJECT="va_arms"
 
 详细见 `ROCM_LIBERO_SETUP.md`（包含 EGL/osmesa、以及 client 输出落盘路径说明）。
 
+### LIBERO post-training（LeRobot 格式 + latents）
+
+与 `arms_train` 不同，**官方管线走 LeRobot latent 数据集**（`MultiLatentLeRobotDataset`），配置名为 **`libero_train`**（`wan_va/configs/va_libero_train_cfg.py`，相机与分辨率见 `va_libero_cfg`：`128×128`、双相机 `agentview_rgb` + `eye_in_hand_rgb`）。
+
+1. **安装**（ROCm 上 `lerobot` 建议 `--no-deps`，避免动 torch）：
+
+```bash
+pip install --no-deps -r requirements_posttrain.txt
+pip install scipy wandb
+```
+
+2. **准备数据**：目录下要有标准 LeRobot 数据集（递归能找到 `meta/info.json`），`episodes` 里带 **`action_config`** 分段；并在**每个相机 key** 下准备好与 `episodes` 对齐的 latent：
+
+`latents/chunk-XXX/<obs_cam_key>/episode_XXXXXX_start_end.pth`
+
+（字段需与 `ArmsLatentDataset`/现有提取脚本一致：`latent`、`frame_ids`、`text_emb`、`latent_num_frames`、`latent_height`、`latent_width`。本仓库目前只自带 `scripts/extract_arms_latents.py`，LIBERO 双相机 + 128 分辨率需按 `va_libero_cfg.obs_cam_keys` 与 LeRobot 视频路径**自行对齐提取**或从上游/社区找现成 LeRobot+latents。）
+
+3. **`empty_emb.pt`**：放在你指定的 `empty_emb_path`（与 `va_libero_train_cfg` 中一致），形状与 `text_emb` 相同（可用任意一条 latent 里的 `text_emb` 做 `zeros_like` 生成）。
+
+4. **改配置**：编辑 `va_libero_train_cfg.py` 里的 `dataset_path`、`empty_emb_path`、`wan22_pretrained_model_name_or_path`（与 arms 相同即可）。
+
+5. **开训**：
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+python -m wan_va.train --config-name libero_train --save-root ./train_out_libero
+```
+
 ---
 
 ## 今日问题与修复对照表（按实际发生顺序）

@@ -5,6 +5,7 @@ from .va_franka_i2va import va_franka_i2va_cfg
 from .va_robotwin_i2va import va_robotwin_i2va_cfg
 from .va_robotwin_train_cfg import va_robotwin_train_cfg
 from .va_arms_train_cfg import va_arms_train_cfg
+from .va_libero_train_cfg import va_libero_train_cfg
 from .va_demo_train_cfg import va_demo_train_cfg
 from .va_demo_cfg import va_demo_cfg
 from .va_demo_i2va import va_demo_i2va_cfg
@@ -16,6 +17,7 @@ VA_CONFIGS = {
     'franka_i2av': va_franka_i2va_cfg,
     'robotwin_train': va_robotwin_train_cfg,
     'arms_train': va_arms_train_cfg,
+    'libero_train': va_libero_train_cfg,
     'demo': va_demo_cfg,
     'demo_train': va_demo_train_cfg,
     'demo_i2av': va_demo_i2va_cfg,
