@@ -506,7 +506,10 @@ class Trainer:
 
                 if self.config.rank == 0:
                     total_norm = losses['total_norm']
-                    progress_bar.n += self.gradient_accumulation_steps
+                    # One entry here == one optimizer step (self.step). Do not add
+                    # gradient_accumulation_steps — that made tqdm's "Nit" look like
+                    # 10× the real step and confused monitoring.
+                    progress_bar.update(1)
                     progress_bar.set_postfix({
                         'latent_loss': f'{latent_loss_show:.4f}',
                         'action_loss': f'{action_loss_show:.4f}',
