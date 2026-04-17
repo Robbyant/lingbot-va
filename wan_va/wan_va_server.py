@@ -27,15 +27,9 @@ from modules.utils import (
     load_transformer,
     load_vae,
 )
-from utils import (
-    FlowMatchScheduler,
-    data_seq_to_patch,
-    get_mesh_id,
-    init_logger,
-    logger,
-    run_async_server_mode,
-    save_async,
-)
+from utils.logging import init_logger, logger
+from utils.scheduler import FlowMatchScheduler
+from utils.utils import data_seq_to_patch, get_mesh_id, save_async
 
 
 class VA_Server:
@@ -693,6 +687,8 @@ def run(args):
         model.generate()
     elif config.infer_mode == 'server':
         logger.info(f"******************************USE Server mode******************************")
+        # lazy import to avoid pulling server-only deps in offline usage
+        from utils.sever_utils import run_async_server_mode
         run_async_server_mode(model, local_rank, config.host, port)
     else:
         raise ValueError(f"Unknown infer mode: {config.infer_mode}")

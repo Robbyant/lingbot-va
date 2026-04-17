@@ -1,1 +1,14 @@
 *.pyc
+
+# datasets / models / generated artifacts (do not commit)
+models/
+arms_lerobot/
+libero_10/
+pick-n-place-sq-lerobot-v21/
+pick-n-place-sq-lerobot-v21.tgz
+_frame_samples/
+
+# generated outputs
+arms/generated_*/
+arms/test_generated*/
+arms/submit_result/
