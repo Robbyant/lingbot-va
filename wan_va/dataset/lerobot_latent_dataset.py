@@ -270,9 +270,39 @@ class LatentLeRobotDataset(LeRobotDataset):
         action_mask = np.ones_like(action, dtype='bool')
         assert action.shape[0] == required_action_num
 
+        # If dataset provides 26-dim (dual-arm joints 14 + fingers 12), map to
+        # 30-dim (EEF_L7 + EEF_R7 + joints_L7 + joints_R7 + grip_L1 + grip_R1).
+        # Without URDF we cannot compute EEF; we keep EEF dims at 0 and mask them out.
+        # Finger joints are aggregated into a single gripper scalar per hand (mean).
+        if int(action.shape[1]) == 26 and int(getattr(self.config, "action_dim", 26)) == 30:
+            # action layout (26):
+            #   0:7  left arm joints
+            #   7:14 right arm joints
+            #   14:20 left fingers (6)
+            #   20:26 right fingers (6)
+            left_j = action[:, 0:7]
+            right_j = action[:, 7:14]
+            left_f = action[:, 14:20]
+            right_f = action[:, 20:26]
 
-        action_paded = np.pad(action, ((0, 0), (0, 1)), mode='constant', constant_values=0)
-        action_mask_padded = np.pad(action_mask, ((0, 0), (0, 1)), mode='constant', constant_values=0)
+            grip_l = left_f.mean(axis=1, keepdims=True)
+            grip_r = right_f.mean(axis=1, keepdims=True)
+
+            eef_zeros = np.zeros((action.shape[0], 14), dtype=action.dtype)
+            action = np.concatenate([eef_zeros, left_j, right_j, grip_l, grip_r], axis=1)  # [T,30]
+
+            # mask: EEF dims invalid (0), joints+gripper valid (1)
+            eef_mask = np.zeros((action_mask.shape[0], 14), dtype=bool)
+            jr_mask = np.ones((action_mask.shape[0], 16), dtype=bool)  # 14 joints + 2 grippers
+            action_mask = np.concatenate([eef_mask, jr_mask], axis=1)
+
+
+        # Align action dim to model action_dim (lingbot-va-base expects 30).
+        # Some datasets store 26-dim actions; pad with zeros to config.action_dim.
+        target_action_dim = int(getattr(self.config, "action_dim", action.shape[1]))
+        pad_dim = max(0, target_action_dim - int(action.shape[1]))
+        action_paded = np.pad(action, ((0, 0), (0, pad_dim)), mode='constant', constant_values=0)
+        action_mask_padded = np.pad(action_mask, ((0, 0), (0, pad_dim)), mode='constant', constant_values=0)
 
         action_aligned = action_paded[:, self.config.inverse_used_action_channel_ids]
         action_mask_aligned = action_mask_padded[:, self.config.inverse_used_action_channel_ids]

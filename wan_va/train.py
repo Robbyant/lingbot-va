@@ -307,7 +307,9 @@ class Trainer:
 
         output = self.transformer(input_dict, train_mode=True)
         latent_loss, action_loss = self.compute_loss(input_dict, output)
-        loss = latent_loss + action_loss
+        latent_w = float(getattr(self.config, "latent_loss_weight", 1.0))
+        action_w = float(getattr(self.config, "action_loss_weight", 1.0))
+        loss = latent_w * latent_loss + action_w * action_loss
 
         loss.backward()
 

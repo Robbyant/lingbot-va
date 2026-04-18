@@ -46,8 +46,10 @@ va_arms_cfg.action_num_inference_steps = 10
 va_arms_cfg.snr_shift = 5.0
 va_arms_cfg.action_snr_shift = 1.0
 
-# 只使用 arms 的前 26 维，剩余维度视为 padding
-va_arms_cfg.used_action_channel_ids = list(range(26))
+# 我们把 26 维（双臂关节+手指）映射到 30 维动作空间：
+#   [EEF_L7, EEF_R7, joints_L7, joints_R7, grip_L1, grip_R1]
+# 无 URDF 时 EEF 维度会被置 0 并在 loss mask 中忽略，因此 used_action_channel_ids 只包含 joints+gripper。
+va_arms_cfg.used_action_channel_ids = list(range(14, 30))
 va_arms_cfg.inverse_used_action_channel_ids = list(range(va_arms_cfg.action_dim))
 
 va_arms_cfg.action_norm_method = "quantiles"

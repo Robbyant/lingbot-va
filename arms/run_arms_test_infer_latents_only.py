@@ -95,6 +95,38 @@ def _load_history_joint_cf1(test_ep_dir: Path, history_len: int) -> np.ndarray:
     return state_cf1
 
 
+def _load_history_joint_26(test_ep_dir: Path, history_len: int) -> np.ndarray:
+    df = pd.read_csv(test_ep_dir / "joint.txt")
+    data = df.iloc[:, 1:].to_numpy(dtype=np.float32)  # [T,26]
+    return data[: min(history_len, data.shape[0])]
+
+
+def _apply_finger_hold_then_grasp(
+    out_t26: np.ndarray,
+    hist_t26: np.ndarray,
+    grasp_steps: int,
+) -> np.ndarray:
+    """
+    Scheme A:
+    - finger dims (14:26) hold the last observed pose for most steps
+    - last `grasp_steps` steps switch to a "closed" template (max over history)
+    """
+    if out_t26.shape[1] != 26:
+        return out_t26
+    if hist_t26.size == 0:
+        return out_t26
+
+    grasp_steps = int(max(0, min(grasp_steps, out_t26.shape[0])))
+    fingers_last = hist_t26[-1, 14:26].copy()
+    fingers_closed = hist_t26[:, 14:26].max(axis=0).copy()
+
+    out = out_t26.copy()
+    out[:, 14:26] = fingers_last[None]
+    if grasp_steps > 0:
+        out[-grasp_steps:, 14:26] = fingers_closed[None]
+    return out
+
+
 def _write_csv_like_sample(path: Path, header_cols: List[str], idxs: List[int], data_t26: np.ndarray) -> None:
     import csv
 
@@ -117,6 +149,7 @@ def main() -> None:
     ap.add_argument("--end-idx", type=int, default=130)
     ap.add_argument("--max-episodes", type=int, default=-1)
     ap.add_argument("--skip-existing", action="store_true")
+    ap.add_argument("--grasp-steps", type=int, default=10, help="方案A：最后多少步把手指切到闭合姿态")
     args = ap.parse_args()
 
     test_root = Path(args.test_root)
@@ -181,6 +214,7 @@ def main() -> None:
             latent_model_input = latents_hist[:, :, 1:].to(server.dtype) if hist_latent_frames > 1 else None
 
             state_cf1 = _load_history_joint_cf1(ep_dir, history_len=int(args.history_len))
+            hist_26 = _load_history_joint_26(ep_dir, history_len=int(args.history_len))
             action_model_input = server.preprocess_action(state_cf1).to(device=server.device, dtype=server.dtype)
 
             server.transformer.clear_pred_cache(server.cache_name)
@@ -222,6 +256,8 @@ def main() -> None:
                 server.frame_st_id += int(cfg.frame_chunk_size)
 
             action_out = np.concatenate(action_chunks, axis=0)[:need_steps]
+            # Scheme A: fingers hold then grasp
+            action_out = _apply_finger_hold_then_grasp(action_out, hist_26, grasp_steps=int(args.grasp_steps))
             joint_out = action_out.copy()
             pred_latents = torch.cat(latent_chunks, dim=2)[:, :, :need_steps].contiguous()  # [1,48,51,16,16]
 

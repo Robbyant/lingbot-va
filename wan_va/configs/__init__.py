@@ -11,6 +11,7 @@ from .va_libero_cfg import va_libero_cfg
 from .va_libero_train_cfg import va_libero_train_cfg
 from .va_libero_i2va import va_libero_i2va_cfg
 from .va_arms_cfg import va_arms_cfg
+from .va_arms_train_cfg import va_arms_train_cfg
 
 VA_CONFIGS = {
     'robotwin': va_robotwin_cfg,
@@ -25,4 +26,5 @@ VA_CONFIGS = {
     'libero_train': va_libero_train_cfg,
     'libero_i2av': va_libero_i2va_cfg,
     'arms': va_arms_cfg,
+    'arms_train': va_arms_train_cfg,
 }
