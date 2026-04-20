@@ -13,7 +13,9 @@ va_arms_train_cfg.dataset_path = "/path/to/arms_lerobot"
 va_arms_train_cfg.empty_emb_path = os.path.join(va_arms_train_cfg.dataset_path, "empty_emb.pt")
 
 # logging / io
-va_arms_train_cfg.enable_wandb = False
+# W&B 默认开启；需要在环境里提供至少：
+#   WANDB_API_KEY, WANDB_TEAM_NAME, WANDB_BASE_URL（以及可选 WANDB_PROJECT）
+va_arms_train_cfg.enable_wandb = True
 # NOTE: After FSDP/CUDA init, fork-based DataLoader workers can deadlock on some stacks.
 # Keep this small (0 is safest for "first run green"); increase only if you validate spawn/fork safety.
 va_arms_train_cfg.load_worker = 0
