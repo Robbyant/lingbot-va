@@ -33,7 +33,7 @@ va_arms_train_cfg.weight_decay = 1e-1
 va_arms_train_cfg.warmup_steps = 50
 va_arms_train_cfg.batch_size = 1
 va_arms_train_cfg.gradient_accumulation_steps = 8
-va_arms_train_cfg.num_steps = 20000
+va_arms_train_cfg.num_steps = 10000
 
 # loss weights (两阶段训练用)
 # 阶段1（动作优先）：latent_loss_weight=0, action_loss_weight=1
