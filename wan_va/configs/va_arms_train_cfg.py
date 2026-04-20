@@ -14,7 +14,9 @@ va_arms_train_cfg.empty_emb_path = os.path.join(va_arms_train_cfg.dataset_path, 
 
 # logging / io
 va_arms_train_cfg.enable_wandb = False
-va_arms_train_cfg.load_worker = 16
+# NOTE: After FSDP/CUDA init, fork-based DataLoader workers can deadlock on some stacks.
+# Keep this small (0 is safest for "first run green"); increase only if you validate spawn/fork safety.
+va_arms_train_cfg.load_worker = 0
 va_arms_train_cfg.save_interval = 200
 va_arms_train_cfg.gc_interval = 50
 va_arms_train_cfg.cfg_prob = 0.1

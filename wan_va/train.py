@@ -126,11 +126,21 @@ class Trainer:
             shuffle=True,
             seed=42
         ) if config.world_size > 1 else None
+        # NOTE: Avoid fork-based DataLoader workers after CUDA init / FSDP shard.
+        # This commonly deadlocks (low CPU, 0% GPU) when num_workers>0.
+        num_workers = int(getattr(config, "load_worker", 0) or 0)
+        if torch.cuda.is_initialized() and num_workers > 0:
+            if int(getattr(config, "rank", 0) or 0) == 0:
+                logger.warning(
+                    "CUDA is already initialized; forcing DataLoader num_workers=0 "
+                    f"(config.load_worker was {num_workers}) to avoid fork/CUDA deadlocks."
+                )
+            num_workers = 0
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=config.batch_size,
             shuffle=(train_sampler is None), 
-            num_workers=config.load_worker,
+            num_workers=num_workers,
             sampler=train_sampler,
         )
 
