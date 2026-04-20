@@ -19,6 +19,10 @@ va_arms_train_cfg.enable_wandb = True
 # NOTE: After FSDP/CUDA init, fork-based DataLoader workers can deadlock on some stacks.
 # Keep this small (0 is safest for "first run green"); increase only if you validate spawn/fork safety.
 va_arms_train_cfg.load_worker = 0
+
+# Dataset construction uses a multiprocessing Pool inside `MultiLatentLeRobotDataset`.
+# Default used to be 128 workers which looks like "hundreds of train.py processes" in pgrep.
+va_arms_train_cfg.dataset_init_workers = 8
 va_arms_train_cfg.save_interval = 200
 va_arms_train_cfg.gc_interval = 50
 va_arms_train_cfg.cfg_prob = 0.1

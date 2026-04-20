@@ -243,8 +243,13 @@ class MultiLatentLeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         config,
-        num_init_worker=128,
+        num_init_worker=None,
     ):
+        if num_init_worker is None:
+            num_init_worker = int(getattr(config, "dataset_init_workers", 8) or 8)
+        cpu = os.cpu_count() or 1
+        # Avoid spawning hundreds of short-lived workers during dataset init.
+        num_init_worker = int(max(1, min(int(num_init_worker), max(1, cpu))))
         self._datasets = construct_lerobot_multi_processor(config, 
                                                            num_init_worker, 
                                                            )
