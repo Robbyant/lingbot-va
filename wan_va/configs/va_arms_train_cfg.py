@@ -9,20 +9,18 @@ va_arms_train_cfg = EasyDict(__name__="Config: VA arms train")
 va_arms_train_cfg.update(va_arms_cfg)
 
 # dataset root containing meta/data/videos/latents/empty_emb.pt
-va_arms_train_cfg.dataset_path = "/path/to/arms_lerobot"
+va_arms_train_cfg.dataset_path = os.environ.get("ARMS_LEROBOT_PATH", "/path/to/arms_lerobot")
 va_arms_train_cfg.empty_emb_path = os.path.join(va_arms_train_cfg.dataset_path, "empty_emb.pt")
 
 # logging / io
-# W&B 默认开启；需要在环境里提供至少：
-#   WANDB_API_KEY, WANDB_TEAM_NAME, WANDB_BASE_URL（以及可选 WANDB_PROJECT）
-va_arms_train_cfg.enable_wandb = True
+va_arms_train_cfg.enable_wandb = False
 # NOTE: After FSDP/CUDA init, fork-based DataLoader workers can deadlock on some stacks.
 # Keep this small (0 is safest for "first run green"); increase only if you validate spawn/fork safety.
 va_arms_train_cfg.load_worker = 0
 
 # Dataset construction uses a multiprocessing Pool inside `MultiLatentLeRobotDataset`.
 # Default used to be 128 workers which looks like "hundreds of train.py processes" in pgrep.
-va_arms_train_cfg.dataset_init_workers = 8
+va_arms_train_cfg.dataset_init_workers = 16
 va_arms_train_cfg.save_interval = 200
 va_arms_train_cfg.gc_interval = 50
 va_arms_train_cfg.cfg_prob = 0.1

@@ -8,7 +8,7 @@ from pathlib import Path
 from collections.abc import Callable
 import os
 from tqdm import tqdm
-from multiprocessing import Pool
+import multiprocessing as mp
 from functools import partial
 import torch
 from einops import rearrange
@@ -219,7 +219,9 @@ def construct_lerobot_multi_processor(config,
     for root in repo_list:
         _ensure_tasks_jsonl(Path(root))
         _ensure_episodes_stats_jsonl(Path(root))
-    with Pool(num_init_worker) as pool:
+    # Use spawn context to avoid fork-related crashes/hangs with torch + GPU init.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(num_init_worker) as pool:
         datasets_out_lst = pool.map(construct_func, repo_list)
                 
     return datasets_out_lst
@@ -246,7 +248,7 @@ class MultiLatentLeRobotDataset(torch.utils.data.Dataset):
         num_init_worker=None,
     ):
         if num_init_worker is None:
-            num_init_worker = int(getattr(config, "dataset_init_workers", 8) or 8)
+            num_init_worker = int(getattr(config, "dataset_init_workers", 16) or 16)
         cpu = os.cpu_count() or 1
         # Avoid spawning hundreds of short-lived workers during dataset init.
         num_init_worker = int(max(1, min(int(num_init_worker), max(1, cpu))))

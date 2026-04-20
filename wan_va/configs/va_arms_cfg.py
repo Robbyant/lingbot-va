@@ -11,7 +11,9 @@ va_arms_cfg = EasyDict(__name__="Config: VA arms")
 va_arms_cfg.update(va_shared_cfg)
 
 # will be overridden by CLI / script
-va_arms_cfg.wan22_pretrained_model_name_or_path = "/path/to/lingbot-va-base"
+va_arms_cfg.wan22_pretrained_model_name_or_path = os.environ.get(
+    "LINGBOT_VA_BASE_PATH", "/path/to/lingbot-va-base"
+)
 
 # inference window / chunking
 # 16G 显存优先保证可跑通：更小窗口
