@@ -244,8 +244,11 @@ class Trainer:
             action_mode=True,
             noisy_cond_prob=0.0)
 
-        latent_dict['text_emb'] = batch_dict['text_emb']
-        action_dict['text_emb'] = batch_dict['text_emb']
+        # Ensure text embedding dtype matches model weights (param_dtype).
+        # Otherwise diffusers text projection may error: Half vs BFloat16.
+        text_emb = batch_dict['text_emb'].to(self.dtype)
+        latent_dict['text_emb'] = text_emb
+        action_dict['text_emb'] = text_emb
         action_dict['actions_mask'] = batch_dict['actions_mask']
 
         input_dict = {
