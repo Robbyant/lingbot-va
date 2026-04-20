@@ -57,7 +57,7 @@ python -m pip install -U pip
 检查 torch 是否可用：
 
 ```bash
-python -c "import torch; print(torch.__version__); print('hip:', torch.version.hip); print('cuda available:', torch.cuda.is_available())"
+python3 -c "import torch; print(torch.__version__); print('hip:', torch.version.hip); print('cuda available:', torch.cuda.is_available())"
 ```
 
 > 注意：ROCm 下 `torch.cuda.is_available()` 也可能为 True（PyTorch 沿用了 cuda API 名称）。
