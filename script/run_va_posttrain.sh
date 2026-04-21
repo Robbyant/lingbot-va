@@ -16,6 +16,11 @@ if [ $# -ne 0 ]; then
     overrides="$*"
 fi
 
+# Auto resume from latest checkpoint (set RESUME=1).
+if [ "${RESUME:-0}" = "1" ]; then
+    overrides="--resume-latest ${overrides}"
+fi
+
 # Do not clobber user-provided WANDB_* env vars.
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 export WANDB_BASE_URL="${WANDB_BASE_URL:-https://api.wandb.ai}"

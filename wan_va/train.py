@@ -534,6 +534,20 @@ def run(args):
     if args.save_root is not None:
         config.save_root = args.save_root
 
+    # Optional: auto resume from latest checkpoint under <save_root>/checkpoints.
+    if getattr(args, "resume_latest", False) and getattr(config, "rank", 0) == 0:
+        ckpt_root = Path(config.save_root) / "checkpoints"
+        if ckpt_root.exists():
+            cands = sorted(ckpt_root.glob("checkpoint_step_*"))
+            if cands:
+                latest = cands[-1]
+                config.resume_from = str(latest)
+                logger.info(f"Auto-resume enabled. Using latest checkpoint: {latest}")
+            else:
+                logger.info(f"Auto-resume enabled but no checkpoints under: {ckpt_root}")
+        else:
+            logger.info(f"Auto-resume enabled but checkpoints dir missing: {ckpt_root}")
+
     if rank == 0:
         logger.info(f"Using config: {args.config_name}")
         logger.info(f"World size: {world_size}, Local rank: {local_rank}")
@@ -556,6 +570,11 @@ def main():
         type=str,
         default=None,
         help="Root directory for saving checkpoints",
+    )
+    parser.add_argument(
+        "--resume-latest",
+        action="store_true",
+        help="Auto resume from latest checkpoint_step_* under <save_root>/checkpoints",
     )
 
     args = parser.parse_args()
