@@ -138,6 +138,27 @@ def _write_csv_like_sample(path: Path, header_cols: List[str], idxs: List[int], 
             writer.writerow([int(t)] + [float(x) for x in data_t26[i].tolist()])
 
 
+def _action16_to_action26(action_cf: np.ndarray, hist_t26: np.ndarray) -> np.ndarray:
+    """
+    VA_Server.postprocess_action returns only used_action_channel_ids (16 dims) for arms config:
+      - 14 joint dims (left7+right7)
+      - 2 gripper dims (not the 12 finger dims in ARMS csv schema)
+
+    For submission/action.txt schema (26 dims), we:
+      - take the first 14 dims as joints
+      - fill finger dims (14:26) using history template (handled later by _apply_finger_hold_then_grasp)
+    """
+    if action_cf.ndim != 2:
+        return action_cf
+    if action_cf.shape[1] != 16:
+        return action_cf
+    out = np.zeros((action_cf.shape[0], 26), dtype=np.float32)
+    out[:, :14] = action_cf[:, :14].astype(np.float32)
+    if hist_t26.size > 0 and hist_t26.shape[1] == 26:
+        out[:, 14:26] = hist_t26[-1, 14:26][None].astype(np.float32)
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--test-root", type=str, default="arms/test")
@@ -149,6 +170,14 @@ def main() -> None:
     ap.add_argument("--end-idx", type=int, default=130)
     ap.add_argument("--max-episodes", type=int, default=-1)
     ap.add_argument("--skip-existing", action="store_true")
+    ap.add_argument("--overwrite-existing", action="store_true", help="重跑并覆盖已存在的输出（action/joint/pred_latents）")
+    ap.add_argument("--no-pred-latents", action="store_true", help="不保存 pred_latents.pt（加速，且不做 latents 拼接）")
+    ap.add_argument(
+        "--start-from-test-end",
+        action="store_true",
+        help="从 arms/test/<ep>/action.txt 的最后一行 idx+1 开始连续预测，并输出 --predict-steps 行（覆盖 --start-idx/--end-idx）",
+    )
+    ap.add_argument("--predict-steps", type=int, default=51, help="--start-from-test-end 时预测多少步（默认 51）")
     ap.add_argument("--grasp-steps", type=int, default=10, help="方案A：最后多少步把手指切到闭合姿态")
     args = ap.parse_args()
 
@@ -187,15 +216,23 @@ def main() -> None:
     if args.max_episodes > 0:
         ep_dirs = ep_dirs[: int(args.max_episodes)]
 
-    idxs = list(range(int(args.start_idx), int(args.end_idx) + 1))
-    need_steps = len(idxs)
+    fixed_start = int(args.start_idx)
+    fixed_end = int(args.end_idx)
+    fixed_idxs = list(range(fixed_start, fixed_end + 1))
+    fixed_need_steps = len(fixed_idxs)
 
     for ep_dir in ep_dirs:
         ep_id = ep_dir.name
         t0 = time.time()
         try:
             ep_out = out_root / ep_id
-            if args.skip_existing and (ep_out / "action.txt").exists() and (ep_out / "joint.txt").exists() and (ep_out / "pred_latents.pt").exists():
+            if (
+                args.skip_existing
+                and not args.overwrite_existing
+                and (ep_out / "action.txt").exists()
+                and (ep_out / "joint.txt").exists()
+                and (args.no_pred_latents or (ep_out / "pred_latents.pt").exists())
+            ):
                 print(f"skip {ep_id}", flush=True)
                 continue
 
@@ -216,6 +253,18 @@ def main() -> None:
             state_cf1 = _load_history_joint_cf1(ep_dir, history_len=int(args.history_len))
             hist_26 = _load_history_joint_26(ep_dir, history_len=int(args.history_len))
             action_model_input = server.preprocess_action(state_cf1).to(device=server.device, dtype=server.dtype)
+
+            if args.start_from_test_end:
+                df_hist = pd.read_csv(ep_dir / "action.txt")
+                if df_hist.shape[0] == 0:
+                    raise RuntimeError("Empty test action.txt")
+                last_idx = int(df_hist.iloc[-1, 0])
+                start_idx = last_idx + 1
+                need_steps = int(args.predict_steps)
+                idxs = list(range(start_idx, start_idx + need_steps))
+            else:
+                idxs = fixed_idxs
+                need_steps = fixed_need_steps
 
             server.transformer.clear_pred_cache(server.cache_name)
             server.frame_st_id = 0
@@ -247,25 +296,41 @@ def main() -> None:
                 a = np.asarray(actions_chunk, dtype=np.float32)
                 while a.ndim > 2 and a.shape[-1] == 1:
                     a = a[..., 0]
-                if a.ndim == 2 and a.shape[0] == 26 and a.shape[1] == int(cfg.frame_chunk_size):
+                # Expected shapes:
+                # - (16, F) from VA_Server.postprocess_action (C,F)
+                # - (26, F) from older pipelines
+                if a.ndim == 2 and a.shape[0] in (16, 26) and a.shape[1] == int(cfg.frame_chunk_size):
                     a = a.T
-                if a.shape[1] > 26:
+                # If action is still channel-first, transpose.
+                if a.ndim == 2 and a.shape[0] in (16, 26) and a.shape[1] != int(cfg.frame_chunk_size):
+                    # already (T,C) or something else; keep
+                    pass
+
+                # Convert 16-d outputs to 26-d csv schema
+                if a.ndim == 2 and a.shape[1] == 16:
+                    a = _action16_to_action26(a, hist_26)
+
+                if a.ndim == 2 and a.shape[1] > 26:
                     a = a[:, :26]
                 action_chunks.append(a)
-                latent_chunks.append(latents_chunk.detach().to("cpu"))
+                if not args.no_pred_latents:
+                    latent_chunks.append(latents_chunk.detach().to("cpu"))
                 server.frame_st_id += int(cfg.frame_chunk_size)
 
             action_out = np.concatenate(action_chunks, axis=0)[:need_steps]
+            if action_out.ndim != 2 or action_out.shape[1] != 26:
+                raise RuntimeError(f"Bad action_out shape {getattr(action_out,'shape',None)}, expected (T,26)")
             # Scheme A: fingers hold then grasp
             action_out = _apply_finger_hold_then_grasp(action_out, hist_26, grasp_steps=int(args.grasp_steps))
             joint_out = action_out.copy()
-            pred_latents = torch.cat(latent_chunks, dim=2)[:, :, :need_steps].contiguous()  # [1,48,51,16,16]
 
             ep_out.mkdir(parents=True, exist_ok=True)
             (ep_out / "instruction.txt").write_text(prompt + "\n", encoding="utf-8")
             _write_csv_like_sample(ep_out / "action.txt", header_cols, idxs, action_out)
             _write_csv_like_sample(ep_out / "joint.txt", header_cols, idxs, joint_out)
-            torch.save({"latents": pred_latents, "fps": 10}, ep_out / "pred_latents.pt")
+            if not args.no_pred_latents:
+                pred_latents = torch.cat(latent_chunks, dim=2)[:, :, :need_steps].contiguous()  # [1,48,T,16,16]
+                torch.save({"latents": pred_latents, "fps": 10}, ep_out / "pred_latents.pt")
 
             print(f"done {ep_id} in {time.time()-t0:.1f}s", flush=True)
             torch.cuda.empty_cache()

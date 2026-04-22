@@ -12,3 +12,10 @@ _frame_samples/
 arms/generated_*/
 arms/test_generated*/
 arms/submit_result/
+
+# local logs / debug outputs
+arms/*.log
+arms/submit_result_step2200*/
+arms/sample_result/
+arms/test/
+arms/train/
