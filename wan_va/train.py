@@ -245,6 +245,8 @@ class Trainer:
             'chunk_size': torch.randint(1, 5, (1,)).item(),
             'window_size': torch.randint(4, 65, (1,)).item(),
         }
+        if 'memory_latents' in batch_dict:
+            input_dict['memory_latents'] = batch_dict['memory_latents']
         return input_dict
 
     def convert_input_format(self, input_dict):

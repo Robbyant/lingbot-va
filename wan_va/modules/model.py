@@ -625,6 +625,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
             in_channels * patch_size[0] * patch_size[1] * patch_size[2],
             inner_dim)
         self.action_embedder = nn.Linear(action_dim, inner_dim)
+        self.memory_proj = nn.Linear(in_channels, inner_dim)
         self.condition_embedder = WanTimeTextImageEmbedding(
             dim=inner_dim,
             time_freq_dim=freq_dim,
@@ -714,6 +715,12 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
         text_hidden_states = self._input_embed(latent_dict["text_emb"], input_type='text')
 
         text_hidden_states = text_hidden_states.flatten(0, 1)[None]
+
+        if 'memory_latents' in input_dict:
+            memory = input_dict['memory_latents'].to(latent_hidden_states.dtype)  # B budget 48
+            memory = self.memory_proj(memory)                                      # B budget inner_dim
+            memory = memory.flatten(0, 1)[None]                                   # 1 B*budget inner_dim
+            text_hidden_states = torch.cat([text_hidden_states, memory], dim=1)
 
         condition_latent_hidden_states = self._input_embed(latent_dict['latent'], input_type='latent').flatten(0, 1)[None]
         condition_action_hidden_states = self._input_embed(action_dict['latent'], input_type='action').flatten(0, 1)[None]

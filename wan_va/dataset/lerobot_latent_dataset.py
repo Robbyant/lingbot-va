@@ -306,6 +306,17 @@ class LatentLeRobotDataset(LeRobotDataset):
         out_dict['actions'], out_dict['actions_mask'] = self._action_post_process(local_start_frame, local_end_frame, latent_frame_ids, ori_data_dict['action'])
 
         out_dict['latents'] = out_dict['latents'].permute(3, 0, 1, 2)
+
+        # Memory tokens: spatial mean-pool first K frames of first camera's latent
+        first_key = self.used_video_keys[0]
+        lat = ori_data_dict[f"{first_key}.latent"]              # [F*H*W, 48]
+        Fl = ori_data_dict[f"{first_key}.latent_num_frames"]
+        Hl = ori_data_dict[f"{first_key}.latent_height"]
+        Wl = ori_data_dict[f"{first_key}.latent_width"]
+        lat_3d = lat.reshape(Fl, Hl * Wl, 48)                  # [F, HW, 48]
+        mem_budget = min(16, Fl)
+        out_dict['memory_latents'] = lat_3d[:mem_budget].mean(dim=1)  # [budget, 48]
+
         return out_dict
 
     def __len__(self):
