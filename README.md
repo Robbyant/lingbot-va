@@ -25,6 +25,7 @@ https://github.com/user-attachments/assets/cec7b7a6-953b-4fa4-8f1a-47efc1fce547
 - [Model Download](#-model-download)
 - [Quick Start](#️-quick-start)
   - [Installation](#installation)
+    - [Environment Compatibility Notes](#environment-compatibility-notes)
   - [attn_mode Configuration](#️-important-attn_mode-configuration)
   - [Deploying LingBot-VA for Inference](#deploying-lingbot-va-for-inference)
     - [Evaluation on RoboTwin-2.0](#evaluation-on-robotwin-20)
@@ -93,6 +94,42 @@ pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https
 pip install websockets einops diffusers==0.36.0 transformers==4.55.2 accelerate msgpack opencv-python matplotlib ftfy easydict
 pip install flash-attn --no-build-isolation
 ```
+
+### Environment Compatibility Notes
+
+The commands above are the recommended baseline for full LingBot-VA
+training, inference, and evaluation runs. PyTorch 2.9.0 with CUDA 12.6 is
+used because the training path depends on PyTorch FlexAttention and the
+inference path depends on attention kernels that are sensitive to the
+PyTorch, CUDA, and `flash-attn` combination.
+
+Other PyTorch builds may be sufficient for lightweight utilities or source
+inspection, but they are not validated as full training/evaluation
+environments. Local smoke checks on Python 3.10-3.13 with PyTorch 2.7,
+2.10, and 2.11 verified only that selected source files compile and
+`torch.nn.attention.flex_attention` can be imported. These checks do not
+validate checkpoint loading, `flash-attn` kernels, RoboTwin/LIBERO
+evaluation, or post-training stability.
+
+| Environment | Status |
+|---|---|
+| Python 3.10.16 + PyTorch 2.9.0 + CUDA 12.6 + `flash-attn` | Recommended baseline for full training/evaluation |
+| Python 3.10-3.13 + PyTorch 2.7/2.10/2.11 | Lightweight source/import smoke only; not documented as supported for full runs |
+| Environments without `flash-attn` | Not sufficient for the flash-attention inference path |
+| PyTorch builds without FlexAttention | Not sufficient for the documented training path |
+
+If you intentionally use a different PyTorch/CUDA pair, please first verify
+the core runtime and attention dependencies:
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+python -c "from torch.nn.attention.flex_attention import flex_attention; print('flex_attention ok')"
+python -c "import flash_attn; print('flash_attn ok')"
+```
+
+For full model runs, keep the `requirements.txt` / installation commands
+in sync and run a small task-specific smoke test before launching a long
+RoboTwin or LIBERO job.
 
 
 ## ⚠️ Important: `attn_mode` Configuration
