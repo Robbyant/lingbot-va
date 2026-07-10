@@ -127,11 +127,21 @@ class Trainer:
             shuffle=True,
             seed=42
         ) if config.world_size > 1 else None
+        # NOTE: Avoid fork-based DataLoader workers after CUDA init / FSDP shard.
+        # This commonly deadlocks (low CPU, 0% GPU) when num_workers>0.
+        num_workers = int(getattr(config, "load_worker", 0) or 0)
+        if torch.cuda.is_initialized() and num_workers > 0:
+            if int(getattr(config, "rank", 0) or 0) == 0:
+                logger.warning(
+                    "CUDA is already initialized; forcing DataLoader num_workers=0 "
+                    f"(config.load_worker was {num_workers}) to avoid fork/CUDA deadlocks."
+                )
+            num_workers = 0
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=config.batch_size,
             shuffle=(train_sampler is None), 
-            num_workers=config.load_worker,
+            num_workers=num_workers,
             sampler=train_sampler,
         )
 
@@ -235,8 +245,11 @@ class Trainer:
             action_mode=True,
             noisy_cond_prob=0.0)
 
-        latent_dict['text_emb'] = batch_dict['text_emb']
-        action_dict['text_emb'] = batch_dict['text_emb']
+        # Ensure text embedding dtype matches model weights (param_dtype).
+        # Otherwise diffusers text projection may error: Half vs BFloat16.
+        text_emb = batch_dict['text_emb'].to(self.dtype)
+        latent_dict['text_emb'] = text_emb
+        action_dict['text_emb'] = text_emb
         action_dict['actions_mask'] = batch_dict['actions_mask']
 
         input_dict = {
@@ -308,7 +321,9 @@ class Trainer:
 
         output = self.transformer(input_dict, train_mode=True)
         latent_loss, action_loss = self.compute_loss(input_dict, output)
-        loss = latent_loss + action_loss
+        latent_w = float(getattr(self.config, "latent_loss_weight", 1.0))
+        action_w = float(getattr(self.config, "action_loss_weight", 1.0))
+        loss = latent_w * latent_loss + action_w * action_loss
 
         loss.backward()
 
@@ -520,6 +535,20 @@ def run(args):
     if args.save_root is not None:
         config.save_root = args.save_root
 
+    # Optional: auto resume from latest checkpoint under <save_root>/checkpoints.
+    if getattr(args, "resume_latest", False) and getattr(config, "rank", 0) == 0:
+        ckpt_root = Path(config.save_root) / "checkpoints"
+        if ckpt_root.exists():
+            cands = sorted(ckpt_root.glob("checkpoint_step_*"))
+            if cands:
+                latest = cands[-1]
+                config.resume_from = str(latest)
+                logger.info(f"Auto-resume enabled. Using latest checkpoint: {latest}")
+            else:
+                logger.info(f"Auto-resume enabled but no checkpoints under: {ckpt_root}")
+        else:
+            logger.info(f"Auto-resume enabled but checkpoints dir missing: {ckpt_root}")
+
     if rank == 0:
         logger.info(f"Using config: {args.config_name}")
         logger.info(f"World size: {world_size}, Local rank: {local_rank}")
@@ -542,6 +571,11 @@ def main():
         type=str,
         default=None,
         help="Root directory for saving checkpoints",
+    )
+    parser.add_argument(
+        "--resume-latest",
+        action="store_true",
+        help="Auto resume from latest checkpoint_step_* under <save_root>/checkpoints",
     )
 
     args = parser.parse_args()

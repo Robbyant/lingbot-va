@@ -16,10 +16,16 @@ if [ $# -ne 0 ]; then
     overrides="$*"
 fi
 
-export WANDB_API_KEY="your key"
-export WANDB_BASE_URL="your url"
-export WANDB_TEAM_NAME="your team name"
-export WANDB_PROJECT="your project"
+# Auto resume from latest checkpoint (set RESUME=1).
+if [ "${RESUME:-0}" = "1" ]; then
+    overrides="--resume-latest ${overrides}"
+fi
+
+# Do not clobber user-provided WANDB_* env vars.
+export WANDB_API_KEY="${WANDB_API_KEY:-}"
+export WANDB_BASE_URL="${WANDB_BASE_URL:-https://api.wandb.ai}"
+export WANDB_TEAM_NAME="${WANDB_TEAM_NAME:-}"
+export WANDB_PROJECT="${WANDB_PROJECT:-}"
 
 ## node setting
 num_gpu=${NGPU}
@@ -31,7 +37,7 @@ config_name=${CONFIG_NAME}
 ## cmd setting
 export TOKENIZERS_PARALLELISM=false
 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" TORCHFT_LIGHTHOUSE=${torchft_lighthouse} \
-python -m torch.distributed.run \
+python3 -m torch.distributed.run \
     --nproc_per_node=${num_gpu} \
     --local-ranks-filter=${log_rank} \
     --master_port ${master_port} \

@@ -1,1 +1,21 @@
 *.pyc
+
+# datasets / models / generated artifacts (do not commit)
+models/
+arms_lerobot/
+libero_10/
+pick-n-place-sq-lerobot-v21/
+pick-n-place-sq-lerobot-v21.tgz
+_frame_samples/
+
+# generated outputs
+arms/generated_*/
+arms/test_generated*/
+arms/submit_result/
+
+# local logs / debug outputs
+arms/*.log
+arms/submit_result_step2200*/
+arms/sample_result/
+arms/test/
+arms/train/
