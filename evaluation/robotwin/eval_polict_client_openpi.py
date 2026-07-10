@@ -265,7 +265,7 @@ def class_decorator(task_name):
     try:
         env_class = getattr(envs_module, task_name)
         env_instance = env_class()
-    except:
+    except Exception:
         raise SystemExit("No Task")
     return env_instance
 
@@ -680,7 +680,7 @@ def parse_args_and_config():
             value = pairs[i + 1]
             try:
                 value = eval(value)
-            except:
+            except Exception:
                 pass
             override_dict[key] = value
         return override_dict
