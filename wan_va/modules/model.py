@@ -361,6 +361,12 @@ class WanAttention(torch.nn.Module):
             torch.zeros((total_tolen, ), dtype=torch.bool, device=device),
             "is_pred":
             torch.zeros((total_tolen, ), dtype=torch.bool, device=device),
+            "frame_id":
+            torch.full((total_tolen, ), -1, device=device, dtype=torch.long),
+            "current_frame_id":
+            -1,
+            "window_size":
+            999999,  # default: no window limit
         }
 
     def allocate_slots(self, cache_name, key_size):
@@ -406,7 +412,48 @@ class WanAttention(torch.nn.Module):
         cache['mask'][slots] = True
         cache['id'][slots] = new_id
         cache['is_pred'][slots] = is_pred
+        cache['frame_id'][slots] = cache.get('current_frame_id', -1)
         return slots
+
+    def set_frame_context(self, cache_name, frame_id, window_size):
+        """Set current frame_id and window_size for subsequent cache updates and attention filtering."""
+        if self.attn_caches is None or cache_name not in self.attn_caches:
+            return
+        cache = self.attn_caches[cache_name]
+        if cache is not None:
+            cache['current_frame_id'] = frame_id
+            cache['window_size'] = window_size
+
+    @staticmethod
+    def _select_valid_cache_slots(cache, update_cache):
+        """Filter cache slots to match training-time attention visibility.
+
+        During training, a noisy query may attend to:
+          - past clean tokens (real observations / real actions from earlier frames)
+          - same-frame predicted tokens (within the same chunk)
+          - strictly-past predicted tokens
+        and only within the attention window. The original streaming-inference
+        code instead surfaced every allocated slot, which let noisy queries
+        attend to same-frame clean tokens and to predicted tokens from future
+        frames -- a train/inference distribution mismatch.
+        """
+        valid = cache['mask'].nonzero(as_tuple=False).squeeze(-1)
+        if update_cache not in (0, 1) or valid.numel() == 0:
+            return valid
+
+        is_pred = cache['is_pred'][valid]
+        frame_ids = cache['frame_id'][valid]
+        current_frame_id = cache.get('current_frame_id', -1)
+        window_size = cache.get('window_size', 999999)
+
+        is_clean = ~is_pred
+        is_past = (frame_ids >= 0) & (frame_ids < current_frame_id)
+        is_same_frame = frame_ids == current_frame_id
+        within_window = (frame_ids - current_frame_id).abs() <= window_size
+        # Training mask: noisy query -> clean key must be past; noisy query -> noisy
+        # key must be same-frame or past; all subject to the attention window.
+        allowed = (is_clean & is_past) | (is_pred & (is_same_frame | is_past))
+        return valid[allowed & within_window]
 
     def restore_cache(self, cache_name, slots):
         self.attn_caches[cache_name]['mask'][slots] = False
@@ -447,8 +494,10 @@ class WanAttention(torch.nn.Module):
                                       is_pred=(update_cache == 1))
             key_pool = self.attn_caches[cache_name]['k']
             value_pool = self.attn_caches[cache_name]['v']
-            mask = self.attn_caches[cache_name]['mask']
-            valid = mask.nonzero(as_tuple=False).squeeze(-1)
+            valid = self._select_valid_cache_slots(
+                self.attn_caches[cache_name], update_cache
+            )
+
             key = key_pool[:, valid]
             value = value_pool[:, valid]
 
@@ -657,6 +706,11 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin):
     def clear_pred_cache(self, cache_name):
         for block in self.blocks:
             block.attn1.clear_pred_cache(cache_name)
+
+    def set_frame_context(self, cache_name, frame_id, window_size):
+        """Set frame context for inference attention masking across all layers."""
+        for block in self.blocks:
+            block.attn1.set_frame_context(cache_name, frame_id, window_size)
 
     def create_empty_cache(self, cache_name, attn_window,
                            latent_token_per_chunk, action_token_per_chunk,

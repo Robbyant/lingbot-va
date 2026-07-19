@@ -250,7 +250,37 @@ class VA_Server:
             raise NotImplementedError
         action = action.squeeze(0).detach().cpu().numpy()
         return action[self.job_config.used_action_channel_ids]
-    
+
+    def _make_zero_action_condition(self):
+        """Build the cold-start action conditioning token.
+
+        At the very first inference step (``frame_st_id == 0``) there is no
+        real action history to feed the model, so we construct an all-zero
+        action in *physical* space. Crucially, the model operates in
+        quantile-normalized space, where physical zero is *not* the tensor
+        ``0`` -- it is ``(0 - q01) / (q99 - q01) * 2 - 1`` per channel.
+        Directly feeding ``torch.zeros`` therefore decoded to the per-channel
+        statistical midpoint ``(q01 + q99) / 2`` rather than to physical zero,
+        seeding the diffusion loop with a spurious non-zero action. That
+        erroneous conditioning entered both the action denoising loop and the
+        KV cache, corrupting every subsequent chunk.
+        """
+        action_cond = torch.zeros(
+            [1, self.job_config.action_dim, 1, self.action_per_frame, 1],
+            device=self.device,
+            dtype=torch.float32,
+        )
+        if self.action_norm_method == 'quantiles':
+            q01 = self.actions_q01.to(self.device).view(1, -1, 1, 1, 1)
+            q99 = self.actions_q99.to(self.device).view(1, -1, 1, 1, 1)
+            action_cond = (action_cond - q01) / (q99 - q01 + 1e-6) * 2. - 1.
+        else:
+            raise NotImplementedError
+
+        action_mask = self.action_mask.to(self.device)
+        action_cond[:, ~action_mask] = 0
+        return action_cond.to(self.dtype)
+
     def _repeat_input_for_cfg(self, input_dict):
         if self.use_cfg:
             input_dict['noisy_latents'] = input_dict['noisy_latents'].repeat(2, 1, 1, 1, 1)
@@ -486,6 +516,11 @@ class VA_Server:
                 torch.no_grad(),
         ):
             # 1. Video Generation Loop
+            # Set frame context so noisy latent queries cannot attend to
+            # predicted tokens of future frames in the KV cache.
+            latent_frame_id = frame_st_id
+            self.transformer.set_frame_context(self.cache_name, latent_frame_id,
+                                               self.job_config.attn_window)
             for i, t in enumerate(tqdm(timesteps)):
                 last_step = i == len(timesteps) - 1
                 latent_cond = init_latent[:, :, 0:1].to(
@@ -521,15 +556,16 @@ class VA_Server:
 
                 latents[:, :, 0:1] = latent_cond if frame_st_id == 0 else latents[:, :, 0:1]
 
+            # 2. Action Generation Loop
+            # Action tokens live at the *next* frame id relative to the video
+            # tokens they accompany; advance the frame context accordingly.
+            action_frame_id = frame_st_id + 1
+            self.transformer.set_frame_context(self.cache_name, action_frame_id,
+                                               self.job_config.attn_window)
             for i, t in enumerate(tqdm(action_timesteps)):
                 last_step = i == len(action_timesteps) - 1
-                action_cond = torch.zeros(
-                    [
-                        1, self.job_config.action_dim, 1,
-                        self.action_per_frame, 1
-                    ],
-                    device=self.device,
-                    dtype=self.dtype) if frame_st_id == 0 else None
+                action_cond = self._make_zero_action_condition(
+                ) if frame_st_id == 0 else None
 
                 input_dict = self._prepare_latent_input(
                     None,
@@ -591,11 +627,17 @@ class VA_Server:
         with (
                 torch.no_grad(),
         ):
+            # Set latent frame context (clean observations, update_cache=2)
+            self.transformer.set_frame_context(self.cache_name, self.frame_st_id,
+                                               self.job_config.attn_window)
             self.transformer(self._repeat_input_for_cfg(input_dict['latent_res_lst']),
                              update_cache=2,
                              cache_name=self.cache_name,
                              action_mode=False)
 
+            # Set action frame context (clean observations, update_cache=2)
+            self.transformer.set_frame_context(self.cache_name, self.frame_st_id + 1,
+                                               self.job_config.attn_window)
             self.transformer(self._repeat_input_for_cfg(input_dict['action_res_lst']),
                              update_cache=2,
                              cache_name=self.cache_name,
