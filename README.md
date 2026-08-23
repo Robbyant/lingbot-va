@@ -211,16 +211,63 @@ It is important to note that the inference server and client must be deployed on
 
 
 ### Evaluation on LIBERO
-Follow the official instructions to install LIBERO, then launch the server and client:
 
+Original LIBERO and LIBERO-Plus use different task sets and trial protocols.
+Select the protocol explicitly; their success rates are not directly comparable.
+
+For the original 10-task LIBERO suites, follow the
+[official LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
+installation instructions and launch the server and client below. This keeps
+the existing evaluation behavior: 50 trials for each of the 10 tasks
+(denominator: 500).
 
 ```bash
 # server
 bash evaluation/libero/launch_server.sh
 
-# client
+# original LIBERO client
 bash evaluation/libero/launch_client.sh
 ```
+
+For [LIBERO-Plus](https://github.com/sylvestf/LIBERO-plus), install its expanded
+benchmark fork, keep the same inference server running, and use:
+
+```bash
+bash evaluation/libero/launch_client_plus.sh \
+  --checkpoint-id robbyant/lingbot-va-posttrain-libero@REVISION
+```
+
+Plus mode evaluates every perturbation variant in the selected suite exactly
+once by default. It rejects any `--test-num` other than `1`, verifies that the
+installed benchmark and `task_classification.json` have the same task count and
+order, and reads the instruction from the BDDL environment rather than from a
+metadata-bearing filename. The launcher forwards additional arguments to the
+client. For an intentional shard, use a half-open slice such as:
+
+```bash
+bash evaluation/libero/launch_client_plus.sh \
+  --task-range 0 250 \
+  --checkpoint-id robbyant/lingbot-va-posttrain-libero@REVISION
+```
+
+The observed denominator is then the size of that slice, but a shard is marked
+non-reportable as a full-suite LIBERO-Plus score. Likewise, an interrupted full
+run records its prefix success rate only as a diagnostic; the full-suite score
+remains `null` until every planned variant has completed. The client pins the
+official suite sizes and the semantic hash of `task_classification.json`, so a
+partial or modified task set fails closed instead of being labeled LIBERO-Plus.
+
+Each run writes an immutable, fingerprinted manifest and an incremental summary
+containing the selected protocol, task range, planned and completed denominators,
+per-category numerators/denominators, score eligibility, code and benchmark
+provenance, and classification file hashes. Re-running an identical command
+resumes matching completed task results; a changed checkpoint, protocol, code,
+benchmark, classification, or task range receives a different run fingerprint
+and cannot be mixed into the old summary. Since the inference server is a
+separate process, checkpoint identity cannot be detected automatically, so
+`--checkpoint-id NAME@REVISION` is required in Plus mode. Original mode keeps
+the legacy optional argument, but omitting it creates a fresh non-resumable run
+identity to prevent two unknown checkpoints from sharing results.
 
 ### Run Image to Video-Action Generation
 
