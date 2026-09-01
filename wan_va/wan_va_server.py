@@ -235,6 +235,7 @@ class VA_Server:
         if self.action_norm_method == 'quantiles':
             action_model_input = (action_model_input - self.actions_q01) / (
                 self.actions_q99 - self.actions_q01 + 1e-6) * 2. - 1.
+            action_model_input = action_model_input.clamp(-1.5, 1.5)
         else:
             raise NotImplementedError
         return action_model_input.unsqueeze(0).unsqueeze(-1)  # B, C, F, H, W
@@ -426,7 +427,7 @@ class VA_Server:
             self.prompt_embeds, self.negative_prompt_embeds = self.encode_prompt(
                 prompt=prompt,
                 negative_prompt=None,
-                do_classifier_free_guidance=self.job_config.guidance_scale > 1,
+                do_classifier_free_guidance=self.use_cfg,
                 num_videos_per_prompt=1,
                 prompt_embeds=None,
                 negative_prompt_embeds=None,
