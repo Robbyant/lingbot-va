@@ -9,7 +9,11 @@ va_robotwin_cfg.update(va_shared_cfg)
 va_robotwin_cfg.wan22_pretrained_model_name_or_path = "/path/to/pretrained/model"
 
 va_robotwin_cfg.attn_window = 72
-va_robotwin_cfg.frame_chunk_size = 2
+# Wan2.2's causal VAE uses a temporal kernel of three frames.  RoboTwin
+# supplies one observation per action frame, so two-frame chunks fail before
+# the transformer is reached; four frames also matches the other shipped
+# runtime configs.
+va_robotwin_cfg.frame_chunk_size = 4
 va_robotwin_cfg.env_type = 'robotwin_tshape'
 
 va_robotwin_cfg.height = 256
