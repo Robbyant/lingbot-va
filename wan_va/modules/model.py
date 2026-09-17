@@ -29,7 +29,10 @@ from functools import partial
 try:
     from flash_attn_interface import flash_attn_func
 except:
-    from flash_attn import flash_attn_func
+    try:
+        from flash_attn import flash_attn_func
+    except ImportError:  # CUDA-only; unused when attn_mode='torch'
+        flash_attn_func = None
 
 __all__ = ['WanTransformer3DModel']
 

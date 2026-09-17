@@ -58,3 +58,5 @@ va_libero_cfg.norm_stat = {
         1.0
     ] + [0.] * 23,
 }
+
+va_libero_cfg.enable_offload = True

@@ -94,6 +94,38 @@ pip install websockets einops diffusers==0.36.0 transformers==4.55.2 accelerate 
 pip install flash-attn --no-build-isolation
 ```
 
+### Intel XPU Support
+
+lingbot-va inference has been validated on Intel GPUs through PyTorch XPU. The model and evaluation path are backend-safe: CUDA is used when available, then XPU, then CPU. No model code or configuration changes are needed to move between those backends.
+
+**Requirements**
+ • Python == 3.10.16
+ • Pytorch == 2.13.0 (XPU build)
+ • A current Intel GPU / oneAPI driver
+
+**XPU Installation**
+```bash
+pip install torch==2.13.0+xpu torchvision==0.28.0+xpu torchcodec==0.16.0+cpu --index-url https://download.pytorch.org/whl/xpu
+pip install websockets einops diffusers==0.36.0 transformers==4.55.2 accelerate msgpack opencv-python matplotlib ftfy easydict
+```
+
+- `flash-attn` is optional on XPU: skip the build and set `"attn_mode": "torch"` in `<your-model-path>/transformer/config.json`; the server soft-imports flash-attn and falls back to native attention when it is unavailable.
+- On integrated GPUs, keep `enable_offload=True` in `wan_va/configs/va_libero_cfg.py` so the VAE and text encoder stay on CPU and the transformer fits within the iGPU's shared memory.
+
+*** Run inference and evaluation ***
+
+Use the same model checkpoint and evaluation workflow described in
+[Deploying LingBot-VA for Inference](#deploying-lingbot-va-for-inference).
+Device placement is selected at runtime, so the same notebook or evaluation
+command can be used on CUDA, XPU, or CPU. When a local script asks for an
+explicit device, choose `xpu` for an Intel GPU; otherwise leave the device unset
+and use the repository's automatic selection.
+
+Outputs closely track the CUDA and CPU paths. Minor float32 flow-matching
+rounding differences are expected across backends and do not indicate a model
+or checkpoint error.
+
+> **Validation**: Verified on a Intel Core Ultra Series 3 Platform iGPU(Xe3) - LIBERO-10 closed-loop evaluation.
 
 ## ⚠️ Important: `attn_mode` Configuration
 

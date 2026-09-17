@@ -38,6 +38,13 @@ from utils import (
 )
 
 
+def _empty_cache():
+    if getattr(torch, "xpu", None) is not None and torch.xpu.is_available():
+        torch.xpu.empty_cache()
+    else:
+        torch.cuda.empty_cache()
+
+
 class VA_Server:
 
     def __init__(self, job_config):
@@ -45,7 +52,8 @@ class VA_Server:
         self.job_config = job_config
         self.save_root = job_config.save_root
         self.dtype = job_config.param_dtype
-        self.device = torch.device(f"cuda:{job_config.local_rank}")
+        _accel = "xpu" if getattr(torch, "xpu", None) is not None and torch.xpu.is_available() else "cuda"
+        self.device = torch.device(f"{_accel}:{job_config.local_rank}")
         self.enable_offload = getattr(job_config, 'enable_offload', True)  # offload vae & text_encoder to save vram
 
         self.scheduler = FlowMatchScheduler(shift=self.job_config.snr_shift,
@@ -438,7 +446,7 @@ class VA_Server:
         self.exp_name = f"{prompt}_{time.strftime('%Y%m%d_%H%M%S')}" if prompt else "default"
         self.exp_save_root = os.path.join(self.save_root, 'real', self.exp_name)
         os.makedirs(self.exp_save_root, exist_ok=True)
-        torch.cuda.empty_cache()
+        _empty_cache()
 
     def _infer(self, obs, frame_st_id=0):
         frame_chunk_size = self.job_config.frame_chunk_size
@@ -566,7 +574,7 @@ class VA_Server:
         save_async(actions, os.path.join(self.exp_save_root, f'actions_{frame_st_id}.pt'))
 
         actions = self.postprocess_action(actions)
-        torch.cuda.empty_cache()
+        _empty_cache()
         return actions, latents
 
     def _compute_kv_cache(self, obs):
@@ -600,7 +608,7 @@ class VA_Server:
                              update_cache=2,
                              cache_name=self.cache_name,
                              action_mode=True)
-        torch.cuda.empty_cache()
+        _empty_cache()
         self.frame_st_id += latent_model_input.shape[2]
 
     @torch.no_grad()
@@ -665,7 +673,7 @@ class VA_Server:
         del self.transformer
         del self.streaming_vae_half
         del self.text_encoder
-        torch.cuda.empty_cache()
+        _empty_cache()
         
         # Move VAE to GPU for decoding
         if self.enable_offload:

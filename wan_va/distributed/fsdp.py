@@ -38,4 +38,7 @@ def shard_model(model,
 def free_model(model):
     del model
     gc.collect()
-    torch.cuda.empty_cache()
+    if getattr(torch, "xpu", None) is not None and torch.xpu.is_available():
+        torch.xpu.empty_cache()
+    else:
+        torch.cuda.empty_cache()
