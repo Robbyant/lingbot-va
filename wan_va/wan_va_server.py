@@ -84,13 +84,16 @@ class VA_Server:
             torch_device=self.device,
             attn_mode="torch"
         )
-        shard_fn = shard_model
-        self.transformer = _configure_model(model=self.transformer,
-                                            shard_fn=shard_fn,
-                                            param_dtype=self.dtype,
-                                            device=self.device,
-                                            eval_mode=True,
-                                            )
+        if job_config.world_size > 1:
+            self.transformer = _configure_model(
+                model=self.transformer,
+                shard_fn=shard_model,
+                param_dtype=self.dtype,
+                device=self.device,
+                eval_mode=True,
+            )
+        else:
+            self.transformer.eval().requires_grad_(False)
 
         self.env_type = job_config.env_type
         self.streaming_vae_half = None
