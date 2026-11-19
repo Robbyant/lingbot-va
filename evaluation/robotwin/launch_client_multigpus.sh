@@ -67,7 +67,7 @@ for i in "${!task_names[@]}"; do
         --ckpt_setting ${model_name} \
         --seed ${seed} \
         --policy_name ${policy_name} \
-        --save_root ${save_root} \
+        --save_root "${save_root}" \
         --video_guidance_scale 5 \
         --action_guidance_scale 1 \
         --test_num ${test_num} \
